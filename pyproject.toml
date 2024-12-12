@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generative-ai-toolkit"
+version = "0.2.1"
+description = "Toolkit to support developers in building and operating high quality LLM-based applications"
+keywords = ["generative-ai-toolkit", "generative-ai", "gen-ai", "agent", "llm", "testing"]
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+dependencies = [
+    "boto3~=1.34.140",
+]
+authors = [
+  {name = "Rui Costa", email = "ruicos@amazon.com"},
+  {name = "Otto Kruse", email = "ottokrus@amazon.nl"},
+  {name = "Ryan French", email = "ryanjfre@amazon.co.uk"},
+]
+
+[project.urls]
+"Homepage" = "https://github.com/awslabs/generative-ai-toolkit"
+"Bug Reports" = "https://github.com/awslabs/generative-ai-toolkit/issues"
+"Source" = "https://github.com/awslabs/generative-ai-toolkit"
+
+[project.optional-dependencies]
+run-agent = [
+    "fastapi~=0.112.0",
+    "uvicorn~=0.30.5",
+]
+evaluate = [
+    "nltk~=3.9.1",
+    "scikit-learn~=1.5.1",
+]
+interactive = [
+    "pandas~=2.2.2",
+    "jsonpickle~=3.2.2",
+    "requests~=2.32.3",
+    "itables~=2.1.4",
+    "tabulate~=0.9.0",
+]
+dev = [
+    "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
+]
+all = [
+    "fastapi~=0.112.0",
+    "uvicorn~=0.30.5",
+    "nltk~=3.9.1",
+    "scikit-learn~=1.5.1",
+    "pandas~=2.2.2",
+    "jsonpickle~=3.2.2",
+    "requests~=2.32.3",
+    "itables~=2.1.4",
+    "tabulate~=0.9.0",
+    "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["ui/dist/**/*"]
+
+[tool.setuptools.exclude-package-data]
+generative_ai_toolkit = ["tests/*"]

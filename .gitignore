@@ -1,0 +1,33 @@
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.egg-info
+build
+
+# Directory for local CDK context files
+.cdk.staging
+
+# CDK asset files
+cdk.out/
+
+# CDK Toolkit stack
+cdk.context.json
+
+# IDEs and editors
+.vscode/
+.idea/
+
+# Ignore Python virtual environments
+.env/
+.venv/
+
+# Node.js dependencies (if applicable)
+node_modules/
+
+# MacOS files
+.DS_Store
+
+# Temporary files
+*.log
+*.swp

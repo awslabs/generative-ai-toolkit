@@ -1,0 +1,17 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+generative_ai_toolkit
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.egg-info
+build

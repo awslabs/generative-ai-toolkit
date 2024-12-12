@@ -1,0 +1,8 @@
+{
+  "project_name": "My GenerativeAIToolkit Agent",
+  "package_name": "{{ cookiecutter.project_name.lower().replace(' ', '-') }}",
+  "agent_name": "{{ cookiecutter.project_name.replace(' ', '') }}",
+  "aws_region": "eu-central-1",
+  "agent_model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+  "python_interpreter": "<PYTHON_PLACEHOLDER>"
+}

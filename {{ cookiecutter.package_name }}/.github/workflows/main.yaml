@@ -1,0 +1,87 @@
+# Copyright 2024 Amazon.com, Inc. and its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Agent CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-central-1
+
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read # This is required for actions/checkout
+
+jobs:
+  cicd:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: Install node.js dependencies
+        run: |
+          npm ci
+
+      - name: Install python dependencies
+        run: |
+          python -m pip install --upgrade uv
+          uv venv
+          uv pip install 'generative_ai_toolkit[all]'
+          uv run python -c "import generative_ai_toolkit; print(generative_ai_toolkit)"
+
+      - name: Run Unit Tests
+        run: |
+          echo "TODO: implement"
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::905418203136:role/github-action
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: {{ "${{ env.AWS_REGION }}" }}
+      - name: Sts GetCallerIdentity
+        run: |
+          aws sts get-caller-identity
+
+      - name: Run Agent Evaluation
+        run: |
+          uv run python evaluate_agent.py | tee agent-evaluation.txt
+
+      - name: Upload Integration Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-evaluation
+          path: agent-evaluation.txt
+
+      - name: Deploy
+        run: |
+          npm install
+          npx cdk deploy --require-approval never
+
+      - name: Smoke test
+        run: |
+          URL=$(aws cloudformation describe-stacks --stack-name {{ cookiecutter.agent_name }}Stack --query "Stacks[0].Outputs[?starts_with(OutputKey, '{{ cookiecutter.agent_name }}FunctionUrl')].OutputValue" --output text)
+          echo "$URL"
+          uv run ./test_function_url.py "$URL" "What is the capital of France?"
