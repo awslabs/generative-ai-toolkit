@@ -14,4 +14,3 @@ generative_ai_toolkit
 *.pyo
 __pycache__/
 *.egg-info
-build

@@ -270,7 +270,7 @@ class GenerativeAIToolkit(GenAIToolkit_):
         if measurements:
             try:
                 # nosemgrep: python.lang.security.audit.insecure-transport.urllib.insecure-request-object.insecure-request-object
-                url = "http://127.0.0.1:8000/conversation_traces"
+                url = "http://127.0.0.1:8000/conversation_measurements"
                 headers = {"Content-Type": "application/json"}
                 data = json.dumps(
                     list(measurements),

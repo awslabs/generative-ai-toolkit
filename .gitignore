@@ -3,7 +3,7 @@
 *.pyo
 __pycache__/
 *.egg-info
-build
+dist
 
 # Directory for local CDK context files
 .cdk.staging

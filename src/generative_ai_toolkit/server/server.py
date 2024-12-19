@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import os
+
+from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 
 
 class SPAStaticFiles(StaticFiles):
@@ -50,27 +53,21 @@ app.mount(
     name="ui",
 )
 
-conversation_traces = []
+conversation_measurements: list[ConversationMeasurements] = []
 
 
-@app.post("/conversation_traces")
+@app.post("/conversation_measurements")
 async def receive_conversation_traces(request: Request):
-    data = await request.json()
-    global conversation_traces
-    conversation_traces = data
+    global conversation_measurements
+    conversation_measurements = await request.json()
     return JSONResponse(
         content={"message": "Conversation traces received successfully"}
     )
 
 
-@app.get("/get_conversation_traces")
-async def get_conversation_traces():
-    return JSONResponse(content=conversation_traces)
-
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+@app.get("/get_conversation_measurements")
+async def get_conversation_measurements():
+    return JSONResponse(content=conversation_measurements)
 
 
 def start_server():

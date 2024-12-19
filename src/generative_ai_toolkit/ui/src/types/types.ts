@@ -47,7 +47,7 @@ export type EdgeType = "no_label" | "LLM" | "TOOL" | "REQUEST" | "RESPONSE";
 
 export interface ConversationMeasurements {
   conversation_id: string;
-  case: Case;
+  case?: Case;
   traces: TraceMeasurements[];
   measurements: Measurement[];
 }
@@ -66,7 +66,7 @@ interface Trace {
   trace_id: string;
   auth_context: unknown;
   created_at: string;
-  additional_info: Record<string, any>;
+  additional_info: Record<string, unknown>;
   to: string;
 }
 
@@ -75,7 +75,7 @@ export interface CaseTrace extends Trace {
   trace_id: string;
   auth_context: unknown;
   created_at: string;
-  additional_info: Record<string, any>;
+  additional_info: Record<string, unknown>;
   to: string;
   case: Case;
   case_nr: number;
@@ -85,12 +85,12 @@ export interface CaseTrace extends Trace {
 
 interface ToolRequest {
   tool_name: string;
-  tool_input: Record<string, any>;
+  tool_input: Record<string, unknown>;
   tool_use_id: string;
 }
 
 interface ToolResponse {
-  tool_response: Record<string, any>;
+  tool_response: Record<string, unknown>;
   latency_ms: number;
 }
 
@@ -120,7 +120,7 @@ interface LlmCaseTrace extends CaseTrace {
 
 interface Request {
   modelId: string;
-  inferenceConfig: Record<string, any>;
+  inferenceConfig: Record<string, unknown>;
   messages: Message[];
   system: SystemMessage[];
 }

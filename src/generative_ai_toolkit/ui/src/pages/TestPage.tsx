@@ -113,7 +113,7 @@ const createEdge = (
 const TestPage: React.FC = () => {
     const [nodes, setNodes, onNodesChange] = useNodesState<CustomNode>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<CustomEdge>([]);
-    const { data: testData = [], isLoading } = useSWR<ConversationMeasurements[]>('http://127.0.0.1:8000/get_conversation_traces', (url: string) => fetch(url).then(res => res.json()))
+    const { data: testData = [], isLoading } = useSWR<ConversationMeasurements[]>('http://127.0.0.1:8000/get_conversation_measurements', (url: string) => fetch(url).then(res => res.json()))
 
     const location = useLocation();
     const queryParams = new URLSearchParams(location.search);

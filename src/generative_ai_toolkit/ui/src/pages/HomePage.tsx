@@ -22,18 +22,18 @@ import '@xyflow/react/dist/style.css';
 import '../index.css';
 
 const HomePage: React.FC = () => {
-    const { data: testData = [], isLoading } = useSWR<ConversationMeasurements[]>('http://127.0.0.1:8000/get_conversation_traces', (url: string) => fetch(url).then(res => res.json()))
+    const { data: testData = [], isLoading } = useSWR<ConversationMeasurements[]>('http://127.0.0.1:8000/get_conversation_measurements', (url: string) => fetch(url).then(res => res.json()))
     const [selectedValidation, setSelectedValidation] = useState<string>('All');
     const [selectedCaseName, setSelectedCaseName] = useState<string>('All');
     const [selectedModel, setSelectedModel] = useState<string>('All');
 
     const validationOptions = ['All', 'Pass', 'Fail'];
-    const caseNameOptions = ['All', ...Array.from(new Set(testData.map((conversation) => conversation.case.name)))];
+    const caseNameOptions = ['All', ...Array.from(new Set(testData.map((conversation) => conversation.case?.name).filter(name => name != null)))];
     const modelOptions = ['All', ...Array.from(new Set(testData.map((conversation) => (conversation.traces[0].trace as LlmTrace).request.modelId)))];
 
     const checkMeasurements = (conversation: ConversationMeasurements) => {
-        for (let trace of conversation.traces) {
-            for (let measurement of trace.measurements) {
+        for (const trace of conversation.traces) {
+            for (const measurement of trace.measurements) {
                 if (measurement["validation_passed"] === false) {
                     return false;
                 }
@@ -46,7 +46,7 @@ const HomePage: React.FC = () => {
     const filteredData = testData.filter((conversation) => {
         const testsPassed = checkMeasurements(conversation);
         const matchesValidation = selectedValidation === 'All' || (selectedValidation === 'Pass' ? testsPassed : !testsPassed);
-        const matchesCase = selectedCaseName === 'All' || conversation.case.name === selectedCaseName;
+        const matchesCase = selectedCaseName === 'All' || conversation.case?.name === selectedCaseName;
         const matchesModel = selectedModel === 'All' || (conversation.traces[0].trace as LlmTrace).request.modelId === selectedModel;
         return matchesValidation && matchesCase && matchesModel;
     });
@@ -196,7 +196,7 @@ const HomePage: React.FC = () => {
                                     </th>
                                     <td className="px-6 py-4">{conversation.conversation_id}</td>
                                     <td className="px-6 py-4">{(conversation.traces[0].trace as LlmTrace).request.modelId}</td>
-                                    <td className="px-6 py-4">{conversation.case.name}</td>
+                                    <td className="px-6 py-4">{conversation.case?.name}</td>
                                     <td className="px-6 py-4">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${testsPassed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                                             {testsPassed ? "Pass" : "Fail"}

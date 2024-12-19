@@ -133,6 +133,7 @@ def measure(
                 logger.metric(
                     measurement,
                     conversation_id=conversation_measurements.conversation_id,
+                    auth_context=last_trace.auth_context,
                     additional_info=measurement.additional_info,
                     namespace="GenerativeAIToolkit",
                     common_dimensions={
@@ -148,7 +149,8 @@ def measure(
                     logger.metric(
                         measurement,
                         conversation_id=conversation_measurements.conversation_id,
-                        trace_id=conversation_traces.trace.trace_id,
+                        auth_context=trace.auth_context,
+                        trace_id=trace.trace_id,
                         additional_info=measurement.additional_info,
                         namespace="GenerativeAIToolkit",
                         common_dimensions={
