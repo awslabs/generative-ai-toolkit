@@ -513,3 +513,73 @@ class _PassFail:
 
 
 PassFail = _PassFail()
+
+
+class Expect:
+    def __init__(self, traces: Sequence[Trace]) -> None:
+        if not traces:
+            raise ValueError("traces must not be an empty list")
+        self.traces = traces
+
+    def _to_equal(self, a, b):
+        assert a == b, f"{a} != {b}"
+
+    @property
+    def agent_text_response(self):
+        last_trace = self.traces[-1]
+        assert last_trace.to == "LLM", "Last trace is not an LLM trace"
+        assert last_trace.response["output"]["message"]["role"] == "assistant"
+        agent_messages = [
+            c for c in last_trace.response["output"]["message"]["content"]
+        ]
+        agent_text_response = [c["text"] for c in agent_messages if "text" in c][0]
+        return _StringAssertor(agent_text_response)
+
+    @property
+    def tool_invocations(self):
+        tool_traces = [trace for trace in self.traces if trace.to == "TOOL"]
+        return _ToolAssertor(tool_traces)
+
+
+class _StringAssertor:
+
+    def __init__(self, base_value: str) -> None:
+        self.base_value = base_value
+
+    def to_equal(self, value: str) -> None:
+        assert self.base_value == value
+
+    def to_include(self, value: str) -> None:
+        assert value in self.base_value
+
+    def to_have_length(self, length=1):
+        assert len(self.base_value) >= length
+
+
+class _ToolAssertor:
+    def __init__(self, tool_traces: Sequence[ToolTrace]) -> None:
+        self.tool_traces = tool_traces
+
+    def to_include(self, tool_name: str, *, with_error: bool | None | str = False):
+        tool_invocations = [
+            trace
+            for trace in self.tool_traces
+            if tool_name == trace.request["tool_name"]
+        ]
+        if not tool_invocations:
+            raise AssertionError(f"Tool {tool_name} was not invoked")
+        if with_error is None:
+            pass
+        errors = [
+            trace.response["tool_error"]
+            for trace in tool_invocations
+            if trace.response.get("tool_error")
+        ]
+        if with_error:
+            if not any(errors):
+                raise AssertionError(f"Tool {tool_name} did not raise an error")
+            if type(with_error) is str:
+                assert any(error for error in errors if with_error in error)
+        else:
+            if any(errors):
+                raise AssertionError(f"Tool {tool_name} raised an error: {errors[0]}")
