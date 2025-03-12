@@ -53,6 +53,7 @@ class ToolRequestTrace(TypedDict):
 
 class ToolResponseTrace(TypedDict):
     tool_response: Any
+    tool_error: Any
     latency_ms: int
 
 
@@ -81,7 +82,7 @@ class BaseTrace:
     trace_id: Ulid
     auth_context: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    additional_info: dict[str, Any] = field(default_factory=dict)
+    additional_info: Mapping[str, Any] | None = None
 
     def __repr__(self) -> str:
         return f"Trace(to={getattr(self, "to", "??")}, conversation_id={self.conversation_id}, trace_id={self.trace_id})"
@@ -256,22 +257,19 @@ class AgentTracer(Protocol):
         req: RequestTrace,
         res: ResponseTrace,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ) -> None: ...
 
     def get_traces(
         self, conversation_id: str, auth_context: str | None
     ) -> Sequence[Trace]: ...
 
-    def set_additional_info(self, additional_info: Mapping[str, Any]): ...
-
 
 class InMemoryAgentTracer(AgentTracer):
     _traces: dict[str | None, dict[str, list[Trace]]]
-    additional_info: dict[str, Any]
 
     def __init__(self) -> None:
         self._traces = defaultdict(lambda: defaultdict(list))
-        self.additional_info = {}
 
     def trace(
         self,
@@ -280,6 +278,7 @@ class InMemoryAgentTracer(AgentTracer):
         req: RequestTrace,
         res: ResponseTrace,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ):
         ulid = Ulid()
         request = deepcopy(req)
@@ -292,7 +291,7 @@ class InMemoryAgentTracer(AgentTracer):
                 trace_id=ulid,
                 request=request,
                 response=response,
-                additional_info=self.additional_info,
+                additional_info=additional_info,
             )
         elif to == "TOOL" and is_tool_request(request) and is_tool_response(response):
             trace = ToolTrace(
@@ -301,17 +300,14 @@ class InMemoryAgentTracer(AgentTracer):
                 trace_id=ulid,
                 request=request,
                 response=response,
-                additional_info=self.additional_info,
+                additional_info=additional_info,
             )
         else:
-            raise ValueError("Invalid trace")
+            raise ValueError(f"Invalid trace. TO: {to}, Req: {req}, Res: {res}")
         self._traces[auth_context][conversation_id].append(trace)
 
     def get_traces(self, conversation_id: str, auth_context: str | None = None):
         return self._traces.get(auth_context, {}).get(conversation_id, [])
-
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        self.additional_info = dict(deepcopy(additional_info))
 
 
 class SingleConversationTracer(InMemoryAgentTracer):
@@ -328,6 +324,7 @@ class SingleConversationTracer(InMemoryAgentTracer):
         req: RequestTrace,
         res: ResponseTrace,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ):
         if conversation_id != self.conversation_id:
             self._traces = defaultdict(
@@ -340,6 +337,7 @@ class SingleConversationTracer(InMemoryAgentTracer):
             req=req,
             res=res,
             auth_context=auth_context,
+            additional_info=additional_info,
         )
 
 
@@ -351,6 +349,7 @@ class NoopAgentTracer(AgentTracer):
         req: RequestTrace,
         res: ResponseTrace,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ):
         pass
 
@@ -359,18 +358,13 @@ class NoopAgentTracer(AgentTracer):
             f"You're using the {self.__class__.__name__} which doesn't support retrieving past traces"
         )
 
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        pass
-
 
 class DynamoDbAgentTracer(AgentTracer):
-    additional_info: dict[str, Any]
 
     def __init__(
         self, table_name: str, session: boto3.session.Session | None = None
     ) -> None:
         self.table = (session or boto3).resource("dynamodb").Table(table_name)
-        self.additional_info = {}
 
     def trace(
         self,
@@ -379,6 +373,7 @@ class DynamoDbAgentTracer(AgentTracer):
         req: RequestTrace,
         res: ResponseTrace,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ):
         now = datetime.now(timezone.utc)
         ulid = Ulid()
@@ -390,7 +385,7 @@ class DynamoDbAgentTracer(AgentTracer):
                 trace_id=ulid,
                 request=DynamoDbMapper.to_dynamo(req),
                 response=DynamoDbMapper.to_dynamo(res),
-                additional_info=self.additional_info,
+                additional_info=additional_info,
                 auth_context=auth_context,
             )
         elif to == "TOOL" and is_tool_request(req) and is_tool_response(res):
@@ -400,11 +395,11 @@ class DynamoDbAgentTracer(AgentTracer):
                 trace_id=ulid,
                 request=DynamoDbMapper.to_dynamo(req),
                 response=DynamoDbMapper.to_dynamo(res),
-                additional_info=self.additional_info,
+                additional_info=additional_info,
                 auth_context=auth_context,
             )
         else:
-            raise ValueError("Invalid trace")
+            raise ValueError(f"Invalid trace. TO: {to}, Req: {req}, Res: {res}")
         try:
             self.table.put_item(
                 Item={
@@ -472,10 +467,6 @@ class DynamoDbAgentTracer(AgentTracer):
 
 
 class StderrAgentTracer(AgentTracer):
-    additional_info: dict[str, Any]
-
-    def __init__(self) -> None:
-        self.additional_info = {}
 
     def trace(
         self,
@@ -484,20 +475,18 @@ class StderrAgentTracer(AgentTracer):
         req,
         res,
         auth_context: str | None = None,
+        additional_info: Mapping[str, Any] | None = None,
     ):
         print(
             f"TRACE {conversation_id}:{auth_context or '_'}:{to}",
             json.dumps(req, default=str),
             json.dumps(res, default=str),
-            json.dumps(self.additional_info, default=str),
+            json.dumps(additional_info, default=str),
             file=sys.stderr,
         )
 
     def get_traces(self, conversation_id: str, auth_context: str | None = None):
         raise NotImplementedError
-
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        self.additional_info = dict(deepcopy(additional_info))
 
 
 T = TypeVar("T", bound=Mapping)
@@ -507,4 +496,4 @@ def deepcopy(d: T) -> T:
     """
     A dumb but threadsafe alternative to copy.deepcopy()
     """
-    return json.loads(json.dumps(d))
+    return json.loads(json.dumps(d, default=str))
