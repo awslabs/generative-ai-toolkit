@@ -34,7 +34,7 @@ from generative_ai_toolkit.conversation_history import (
     InMemoryConversationHistory,
 )
 from generative_ai_toolkit.tracer import AgentTracer, SingleConversationTracer, Trace
-from generative_ai_toolkit.utils.logging import logger
+from generative_ai_toolkit.utils.typings import ToolResultContent
 
 
 class Agent(Protocol):
@@ -157,9 +157,9 @@ class BedrockConverseAgent(Agent):
         temperature: float | None = None,
         topP: float | None = None,
         stop_sequences: list[str] | None = None,
-        conversation_history: ConversationHistory
-        | Callable[..., ConversationHistory]
-        | None = None,
+        conversation_history: (
+            ConversationHistory | Callable[..., ConversationHistory] | None
+        ) = None,
         tracer: AgentTracer | None = None,
         session: boto3.session.Session | None = None,
         tools: Sequence[Callable] | None = None,
@@ -301,7 +301,9 @@ class BedrockConverseAgent(Agent):
         self._tools[tool.name] = tool
         return tool
 
-    def _invoke_tool(self, msg: MessageContent, tools: Mapping[str, Tool]):
+    def _invoke_tool(
+        self, msg: MessageContent, tools: Mapping[str, Tool]
+    ) -> ToolResultContent:
         if "toolUse" not in msg:
             raise ValueError("Invalid tool usage response.")
         tool_use = msg["toolUse"]
@@ -309,7 +311,9 @@ class BedrockConverseAgent(Agent):
         start = time.perf_counter()
         try:
             tool_name = tool_use["name"]
-            tool = tools[tool_name]
+            tool = tools.get(tool_name)
+            if not tool:
+                raise ValueError(f"Unknown tool: {tool_name}")
             tool_response = tool.invoke(**tool_use["input"])
             if not isinstance(tool_response, dict):
                 tool_response = {"tool_response": tool_response}
@@ -329,23 +333,20 @@ class BedrockConverseAgent(Agent):
                 "tool_use_id": tool_use["toolUseId"],
                 "tool_input": tool_use["input"],
             },
-            {"tool_response": tool_response, "latency_ms": latency_ms},
+            {
+                "tool_response": tool_response,
+                "tool_error": tool_error,
+                "latency_ms": latency_ms,
+            },
             auth_context=self.auth_context,
         )
-        self._conversation_history.add_message(
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "toolResult": {
-                            "toolUseId": tool_use["toolUseId"],
-                            "status": "success" if not tool_error else "error",
-                            "content": [{"json": tool_response}],
-                        }
-                    },
-                ],
-            },
-        )
+        return {
+            "toolResult": {
+                "toolUseId": tool_use["toolUseId"],
+                "status": "success" if not tool_error else "error",
+                "content": [{"json": tool_response}],
+            }
+        }
 
     def converse(
         self, user_input: str, tools: Sequence[Callable | Tool] | None = None
@@ -412,7 +413,13 @@ class BedrockConverseAgent(Agent):
                     self.bedrock_client.converse(**cast(Any, request)),
                 )
             except botocore.exceptions.ClientError as err:
-                logger.error(str(err), request=request, response=err.response)
+                self._tracer.trace(
+                    self._conversation_history.conversation_id,
+                    "LLM",
+                    request,
+                    cast(Any, err.response),
+                    auth_context=self.auth_context,
+                )
                 raise
             self._tracer.trace(
                 self._conversation_history.conversation_id,
@@ -430,8 +437,17 @@ class BedrockConverseAgent(Agent):
             self._conversation_history.add_message(response["output"]["message"])
 
             if response["stopReason"] == "tool_use":
-                last_msg = response["output"]["message"]["content"][-1]
-                self._invoke_tool(last_msg, tools=tools_available)
+                tool_results: list[MessageContent] = [
+                    self._invoke_tool(message, tools=tools_available)
+                    for message in response["output"]["message"]["content"]
+                    if "toolUse" in message
+                ]
+                self._conversation_history.add_message(
+                    {
+                        "role": "user",
+                        "content": tool_results,
+                    },
+                )
                 request["messages"] = list(self._conversation_history.messages)
                 continue
 
@@ -536,7 +552,13 @@ class BedrockConverseAgent(Agent):
                     self.bedrock_client.converse_stream(**cast(Any, request)),
                 )
             except botocore.exceptions.ClientError as err:
-                logger.error(str(err), request=request, response=err.response)
+                self._tracer.trace(
+                    self._conversation_history.conversation_id,
+                    "LLM",
+                    request,
+                    cast(Any, err.response),
+                    auth_context=self.auth_context,
+                )
                 raise
 
             metadata = None
@@ -606,9 +628,17 @@ class BedrockConverseAgent(Agent):
             self._conversation_history.add_message(message)
 
             if stop_reason == "tool_use":
-                for msg in content_blocks:
-                    if "toolUse" in msg:
-                        self._invoke_tool(msg, tools=tools_available)
+                tool_results: list[MessageContent] = [
+                    self._invoke_tool(message, tools=tools_available)
+                    for message in content_blocks
+                    if "toolUse" in message
+                ]
+                self._conversation_history.add_message(
+                    {
+                        "role": "user",
+                        "content": tool_results,
+                    },
+                )
                 request["messages"] = list(self._conversation_history.messages)
                 continue
 
