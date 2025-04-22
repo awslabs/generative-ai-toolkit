@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import json
+from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
-from concurrent.futures import ThreadPoolExecutor, Future
 
 import boto3.session
 import numpy as np
@@ -107,10 +107,8 @@ class AgentResponseSimilarityMetric(BaseMetric):
             turn_max_similarity = -1
             for expected_embedding in turn:
                 similarity = cosine_similarity(expected_embedding, actual)[0][0]
-                if similarity > turn_max_similarity:
-                    turn_max_similarity = similarity
-            if turn_max_similarity < min_similarity:
-                min_similarity = turn_max_similarity
+                turn_max_similarity = max(turn_max_similarity, similarity)
+            min_similarity = min(min_similarity, turn_max_similarity)
 
         return Measurement(
             name="CosineSimilarity",

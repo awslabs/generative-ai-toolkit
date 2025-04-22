@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from generative_ai_toolkit.metrics.measurement import Measurement
 from generative_ai_toolkit.tracer.tracer import Trace

@@ -13,10 +13,13 @@
 # limitations under the License.
 
 import inspect
-import textwrap
 import re
-from typing import Callable, Any, Protocol, get_origin
-from generative_ai_toolkit.utils.typings import ToolSpec
+import textwrap
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol, get_origin
+
+if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import ToolTypeDef
 
 
 class Tool(Protocol):
@@ -26,7 +29,7 @@ class Tool(Protocol):
     """
 
     @property
-    def tool_spec(self) -> ToolSpec:
+    def tool_spec(self) -> "ToolTypeDef":
         """
         The tool spec for this tool, that can be used in the Amazon Bedrock Converse API
         """
@@ -134,13 +137,13 @@ class BedrockConverseTool(Tool):
         return param_descriptions
 
     @property
-    def tool_spec(self) -> ToolSpec:
+    def tool_spec(self) -> "ToolTypeDef":
         """
         The tool spec for this tool, that can be used in the Amazon Bedrock Converse API
         """
         return self._tool_spec
 
-    def create_tool_spec(self) -> ToolSpec:
+    def create_tool_spec(self) -> "ToolTypeDef":
         properties = {}
         for name, details in self.parameters.items():
             properties[name] = {

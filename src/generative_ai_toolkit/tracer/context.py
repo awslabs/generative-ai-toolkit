@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import (
     Any,
-    Callable,
-    Mapping,
     Protocol,
     TypedDict,
     Unpack,
 )
-from contextvars import ContextVar
 
 from generative_ai_toolkit.tracer.trace import Trace, TraceScope
 
@@ -51,11 +50,15 @@ class TraceContextProvider(Protocol):
 
 class ContextVarTraceContextProvider:
     def __init__(self) -> None:
-        self._context = ContextVar("trace_context", default=TraceContext())
+        self._context = ContextVar[TraceContext | None]("trace_context", default=None)
 
     @property
     def context(self) -> TraceContext:
-        return self._context.get()
+        trace_context = self._context.get()
+        if not trace_context:
+            trace_context = TraceContext()
+            self._context.set(trace_context)
+        return trace_context
 
     def set_context(self, **update: Unpack[TraceContextUpdate]) -> Callable[[], None]:
         old_context = self.context

@@ -12,26 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime, timezone
-import secrets
+import copy
 import json
+import secrets
+import threading
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import (
     Any,
     Literal,
-    Mapping,
     NamedTuple,
 )
-import threading
-import copy
 
 deepcopy_lock = threading.Lock()
 IMMUTABLE_TYPES = (int, float, bool, str, type(None), tuple, frozenset)
+
 
 def thread_safe_deepcopy(obj):
     if isinstance(obj, IMMUTABLE_TYPES):
         return obj
     with deepcopy_lock:
         return copy.deepcopy(obj)
+
 
 class Trace:
     span_name: str
@@ -75,7 +77,7 @@ class Trace:
             parent_span.trace_id if parent_span else secrets.token_hex(16)
         )
         self.parent_span = parent_span
-        self.started_at = started_at or datetime.now(timezone.utc)
+        self.started_at = started_at or datetime.now(UTC)
         self.ended_at = ended_at
         self._attributes = attributes or {}
         self._inheritable_attributes = {}
@@ -158,14 +160,14 @@ class Trace:
         }
 
     def as_human_readable(self) -> str:
-        BLUE = "\033[94m"
-        GREEN = "\033[92m"
-        YELLOW = "\033[93m"
-        RED = "\033[91m"
-        GRAY = "\033[90m"
-        RESET = "\033[0m"
-        MAGENTA = "\033[95m"
-        CYAN = "\033[96m"
+        BLUE = "\033[94m"  # noqa: N806
+        GREEN = "\033[92m"  # noqa: N806
+        YELLOW = "\033[93m"  # noqa: N806
+        RED = "\033[91m"  # noqa: N806
+        GRAY = "\033[90m"  # noqa: N806
+        RESET = "\033[0m"  # noqa: N806
+        MAGENTA = "\033[95m"  # noqa: N806
+        CYAN = "\033[96m"  # noqa: N806
 
         def truncate(
             text: str, max_length=200, max_lines=1, indent_subsequent_lines=0
@@ -261,7 +263,7 @@ class Trace:
             if error := attributes.get("ai.tool.error"):
                 result += f"\n{RED}{truncate_multiline("Error",error)}{RESET}"
 
-        elif trace_type == "converse" or trace_type == "converse-stream":
+        elif trace_type in {"converse", "converse-stream"}:
             user_input = attributes.get("ai.user.input")
             if user_input is not None:
                 result += f"\n{GRAY}{truncate_multiline("Input",user_input)}{RESET}"

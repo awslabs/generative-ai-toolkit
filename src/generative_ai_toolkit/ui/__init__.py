@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 import datetime
 import functools
-from itertools import groupby
 import json
 import textwrap
-from typing import Iterable, Mapping, Sequence
-
-from generative_ai_toolkit.tracer.trace import Trace
-from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
-from generative_ai_toolkit.metrics.measurement import Measurement, Unit
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from itertools import groupby
 
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
+
+from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
+from generative_ai_toolkit.metrics.measurement import Measurement, Unit
+from generative_ai_toolkit.tracer.trace import Trace
 
 
 @dataclass
@@ -48,8 +48,8 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
     trace_summaries: list[TraceSummary] = []
     by_start_date = sorted(traces, key=lambda t: t.started_at)
     by_trace_id = sorted(by_start_date, key=lambda t: t.trace_id)
-    for trace_id, traces_for_trace_id in groupby(by_trace_id, key=lambda t: t.trace_id):
-        traces_for_trace_id = list(traces_for_trace_id)
+    for trace_id, traces_for_trace_id_iter in groupby(by_trace_id, key=lambda t: t.trace_id):
+        traces_for_trace_id = list(traces_for_trace_id_iter)
         root_trace = traces_for_trace_id[0]
         assert root_trace.parent_span is None
         summary = TraceSummary(
@@ -333,7 +333,7 @@ def chat_messages_from_traces(
     if not traces:
         return None, None, []
     summaries = get_summaries_for_traces(traces)
-    conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
+    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()
@@ -356,7 +356,7 @@ def chat_messages_from_conversation_measurements(
     summaries = get_summaries_for_conversation_measurements(conv_measurements)
     if not summaries:
         return None, None, []
-    conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
+    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()

@@ -12,33 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import textwrap
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
-import textwrap
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
-    Iterable,
     Literal,
-    Mapping,
     Protocol,
-    Sequence,
     TypedDict,
     cast,
     runtime_checkable,
 )
-from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
+from generative_ai_toolkit.agent import Tool
+from generative_ai_toolkit.metrics.measurement import Measurement
 from generative_ai_toolkit.tracer.tracer import (
     Trace,
     TraceScope,
 )
-from generative_ai_toolkit.metrics.measurement import Measurement
-from generative_ai_toolkit.agent import Tool
-from generative_ai_toolkit.utils.llm_response import get_text, NonStreamingResponse
-from generative_ai_toolkit.utils.typings import Message
+from generative_ai_toolkit.utils.llm_response import get_text
+
+if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import MessageOutputTypeDef
 
 
 class CaseTrace(Trace):
@@ -107,7 +107,7 @@ class _AgentLikeWithReset(_AgentLike, Protocol):
 class _AgentLikeWithMessages(_AgentLike, Protocol):
 
     @property
-    def messages(self) -> Sequence[Message]: ...
+    def messages(self) -> Sequence["MessageOutputTypeDef"]: ...
 
 
 AgentLike = _AgentLike | _AgentLikeWithReset | _AgentLikeWithMessages
@@ -130,14 +130,16 @@ class Case:
     expected_agent_responses_per_turn: list[Sequence[str]]
     converse_kwargs: Mapping
     validate: ValidatorFunc | Sequence[ValidatorFunc] | None
-    user_input_producer: Callable[[Sequence[Message]], str] | None
+    user_input_producer: Callable[[Sequence["MessageOutputTypeDef"]], str] | None
 
     def __init__(
         self,
         user_inputs: str | Sequence[str] | None = None,
         *,
         name: str | None = None,
-        user_input_producer: Callable[[Sequence[Message]], str] | None = None,
+        user_input_producer: (
+            Callable[[Sequence["MessageOutputTypeDef"]], str] | None
+        ) = None,
         overall_expectations: str | None = None,
         converse_kwargs: Mapping | None = None,
         validate: ValidatorFunc | Sequence[ValidatorFunc] | None = None,
@@ -288,7 +290,7 @@ class Case:
         )
         return Case(
             name=case_name or f"Tool use: {tool.name}",
-            user_inputs=[get_text(cast(NonStreamingResponse, response))],
+            user_inputs=[get_text(response)],
         )
 
     @classmethod
@@ -323,7 +325,9 @@ def case(
     user_inputs: Sequence[str] | None = None,
     overall_expectations: str | None = None,
     converse_kwargs: Mapping | None = None,
-    user_input_producer: Callable[[Sequence[Message]], str] | None = None,
+    user_input_producer: (
+        Callable[[Sequence["MessageOutputTypeDef"]], str] | None
+    ) = None,
 ):
     def decorator(func: ValidatorFunc):
         return Case(
@@ -354,7 +358,7 @@ def user_conversation_from_trace(trace: Trace):
     )
 
 
-def user_conversation_from_messages(messages: Iterable[Message]):
+def user_conversation_from_messages(messages: Iterable["MessageOutputTypeDef"]):
     user_conversation: list[ConversationMessage] = []
 
     for msg in messages:
@@ -388,7 +392,9 @@ class UserInputProducer:
         self.user_intent = user_intent
         self.max_nr_turns = max_nr_turns
 
-    def _format_conversation_history(self, messages: Sequence[Message]) -> str:
+    def _format_conversation_history(
+        self, messages: Sequence["MessageOutputTypeDef"]
+    ) -> str:
         turns = []
         for msg in user_conversation_from_messages(messages):
             turns.append(
@@ -408,7 +414,7 @@ class UserInputProducer:
         )
 
     def _should_stop_conversation(
-        self, messages: Sequence[Message] | None = None
+        self, messages: Sequence["MessageOutputTypeDef"] | None = None
     ) -> bool:
         if not messages:
             return False
@@ -438,7 +444,7 @@ class UserInputProducer:
                   - if the user's intent was reasonably satisfied by the assistant; the assistant did what the user asked.
                   - if the user wants to end the conversation
                   - if continuing the conversation becomes pointless
-                
+
                 Your response should be "ASK USER" or "ABORT", followed by your reasoning, for example:
 
                   - ABORT: the user's intent was satisfied, they wanted XYZ and they got XYZ. The assistant doesn't need to confirm.
@@ -478,11 +484,11 @@ class UserInputProducer:
                 }
             ],
         )
-        response = get_text(cast(NonStreamingResponse, response))
+        response = get_text(response)
         intent_satisfied = "ABORT" in response
         return intent_satisfied
 
-    def __call__(self, messages: Sequence[Message] | None = None) -> str:
+    def __call__(self, messages: Sequence["MessageOutputTypeDef"] | None = None) -> str:
         if messages:
             if self._should_stop_conversation(messages):
                 return ""
@@ -539,7 +545,7 @@ class UserInputProducer:
                 }
             ],
         )
-        return get_text(cast(NonStreamingResponse, response))
+        return get_text(response)
 
 
 class _PassFail:
@@ -704,9 +710,8 @@ class _ToolAssertor:
                 raise AssertionError(f"Tool {tool_name} did not raise an error")
             if type(with_error) is str:
                 assert any(error for error in errors if with_error in error)
-        else:
-            if any(errors):
-                raise AssertionError(f"Tool {tool_name} raised an error: {errors[0]}")
+        elif any(errors):
+            raise AssertionError(f"Tool {tool_name} raised an error: {errors[0]}")
         return _ToolInputOutputAssertor(tool_invocations)
 
     def to_not_include(self, tool_name: str):

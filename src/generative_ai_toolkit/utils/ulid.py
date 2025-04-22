@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime, timezone
-from functools import cached_property
-import time
 import secrets
+import time
+from datetime import UTC, datetime
+from functools import cached_property
 
 
 class Ulid:
@@ -58,7 +58,7 @@ class Ulid:
             timestamp_encoded = self.ulid[: self.TIMESTAMP_LENGTH]
             self._timestamp = self._decode_base32(timestamp_encoded)
         timestamp_datetime = datetime.fromtimestamp(
-            self._timestamp / 1000, tz=timezone.utc
+            self._timestamp / 1000, tz=UTC
         )
         return timestamp_datetime
 

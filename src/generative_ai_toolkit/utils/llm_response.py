@@ -13,19 +13,22 @@
 # limitations under the License.
 
 import json
+from typing import TYPE_CHECKING
 
-from .typings import NonStreamingResponse
-
-
-def get_text(response: NonStreamingResponse):
-    for msg in response["output"]["message"]["content"]:
-        if "text" in msg:
-            return msg["text"]
-    else:
-        raise ValueError(f"No text found in response: `{response}`")
+if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import ConverseResponseTypeDef
 
 
-def json_parse(response: NonStreamingResponse):
+def get_text(response: "ConverseResponseTypeDef"):
+    message = response["output"].get("message")
+    if message:
+        for msg in message["content"]:
+            if "text" in msg:
+                return msg["text"]
+    raise ValueError(f"No text found in response: `{response}`")
+
+
+def json_parse(response: "ConverseResponseTypeDef"):
     text = get_text(response).strip()
     try:
         return json.loads(text.replace("\n", " "))

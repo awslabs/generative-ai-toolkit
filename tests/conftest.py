@@ -12,10 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from generative_ai_toolkit.metrics.base_metric import BaseMetric
-from generative_ai_toolkit.metrics.measurement import (
-    Measurement,
-    Unit,
-)
+import pytest
+from sample_agent_1 import sample_agent_1
+from sample_agent_2 import sample_agent_2
 
-__all__ = ["BaseMetric", "Measurement", "Unit"]
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+
+@pytest.fixture
+def mock_bedrock_converse():
+    mock = MockBedrockConverse()
+    yield mock
+    if mock.mock_responses:
+        raise Exception("Still have unconsumed mock responses")
+
+
+@pytest.fixture
+def mock_agent_1(mock_bedrock_converse):
+    yield sample_agent_1(session=mock_bedrock_converse.session())
+
+
+@pytest.fixture
+def mock_agent_2(mock_bedrock_converse):
+    yield sample_agent_2(session=mock_bedrock_converse.session())

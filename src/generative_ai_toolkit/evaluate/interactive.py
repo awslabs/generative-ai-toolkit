@@ -13,27 +13,28 @@
 # limitations under the License.
 
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from statistics import fmean
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 import pandas as pd
 from IPython.display import display
 from tabulate import tabulate
 
 from generative_ai_toolkit.evaluate.evaluate import (
-    GenerativeAIToolkit as GenAIToolkit_,
     ConversationMeasurements,
+    Permute,  # noqa: F401 Leave this here, so it can be imported from this module as well
 )
 from generative_ai_toolkit.evaluate.evaluate import (
-    Permute,  # noqa: F401 Leave this here, so it can be imported from this module as well
+    GenerativeAIToolkit as GenAIToolkit_,
 )
 from generative_ai_toolkit.metrics import BaseMetric
 from generative_ai_toolkit.metrics.measurement import Measurement
 from generative_ai_toolkit.test import AgentLike, Case
 from generative_ai_toolkit.tracer.tracer import Trace
-from generative_ai_toolkit.utils.interactive import is_notebook
 from generative_ai_toolkit.ui import measurements_ui
-from dataclasses import dataclass, field
+from generative_ai_toolkit.utils.interactive import is_notebook
 
 
 class EnhancedEvalResult:
@@ -86,15 +87,15 @@ class EnhancedEvalResult:
     @staticmethod
     def summary_for(conversations: Iterable[ConversationMeasurements]):
         @dataclass
-        class Aggregated_counts:
+        class AggregatedCounts:
             measurements: list[Measurement] = field(default_factory=list)
             trace_count: int = 0
             run_nrs: set[int] = field(default_factory=set)
             nr_passed = 0
             nr_failed = 0
 
-        aggregated_counts: dict[tuple, Aggregated_counts] = defaultdict(
-            lambda: Aggregated_counts()
+        aggregated_counts: dict[tuple, AggregatedCounts] = defaultdict(
+            lambda: AggregatedCounts()
         )
 
         for measurements_for_conversation in conversations:
@@ -130,7 +131,7 @@ class EnhancedEvalResult:
             for measurement in counts_per_permutation.measurements:
                 if measurement.dimensions:
                     for dimensions in measurement.dimensions:
-                        vals_concat = "_".join((sorted(dimensions.values())))
+                        vals_concat = "_".join(sorted(dimensions.values()))
                         measurement_averages[
                             f"{measurement.name} {vals_concat}"
                         ].append(measurement.value)

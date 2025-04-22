@@ -1,30 +1,41 @@
-from dataclasses import dataclass
-import json
-from typing import Any, Literal, Mapping, Sequence
-from itertools import groupby
 import http.client
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from itertools import groupby
+from typing import Any, Literal
 
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest as OtlpExportTraceServiceRequest,
 )
-from opentelemetry.proto.trace.v1.trace_pb2 import (
-    ResourceSpans as OtlpResourceSpans,
-    ScopeSpans as OtlpScopeSpans,
-    Span as OtlpSpan,
-    Status as OtlpStatus,
+from opentelemetry.proto.common.v1.common_pb2 import (
+    AnyValue as OtlpAnyValue,
 )
-from opentelemetry.proto.resource.v1.resource_pb2 import Resource as OtlpResource
+from opentelemetry.proto.common.v1.common_pb2 import (
+    InstrumentationScope as OtlpInstrumentationScope,
+)
 from opentelemetry.proto.common.v1.common_pb2 import (
     KeyValue as OtlpKeyValue,
-    AnyValue as OtlpAnyValue,
-    InstrumentationScope as OtlpInstrumentationScope,
+)
+from opentelemetry.proto.resource.v1.resource_pb2 import Resource as OtlpResource
+from opentelemetry.proto.trace.v1.trace_pb2 import (
+    ResourceSpans as OtlpResourceSpans,
+)
+from opentelemetry.proto.trace.v1.trace_pb2 import (
+    ScopeSpans as OtlpScopeSpans,
+)
+from opentelemetry.proto.trace.v1.trace_pb2 import (
+    Span as OtlpSpan,
+)
+from opentelemetry.proto.trace.v1.trace_pb2 import (
+    Status as OtlpStatus,
 )
 
 from generative_ai_toolkit.tracer.tracer import (
-    Trace,
-    TraceScope,
     BaseTracer,
+    Trace,
     TraceContextProvider,
+    TraceScope,
 )
 
 
@@ -178,9 +189,8 @@ class OtlpTracer(BaseTracer):
         # Must read response, in order to be able to re-use connection
         # Also, nice for potential error message
         response_body = response.read()
-        
+
         if response.status != 200:
             raise ValueError(
                 f"Failed to send batch: {response.status} {response.reason} {response_body.decode()}"
             )
-        

@@ -1,4 +1,5 @@
-# Copyright 2024 Amazon.com, Inc. and its affiliates. All Rights Reserved.
+# noqa: N999
+# # Copyright 2024 Amazon.com, Inc. and its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Sequence
+from collections.abc import Sequence
+
 from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
-from generative_ai_toolkit.tracer import Trace
 from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
+from generative_ai_toolkit.tracer import Trace
 
 
 class TemplateMetric(BaseMetric):

@@ -14,9 +14,10 @@
 
 from typing import cast
 
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
+
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
 from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 
 class BleuMetric(BaseMetric):
@@ -65,8 +66,7 @@ class BleuMetric(BaseMetric):
                     ),
                 ),
             )
-            if bleu_score < min_bleu:
-                min_bleu = bleu_score
+            min_bleu = min(min_bleu, bleu_score)
 
         return Measurement(
             name="BleuScore",

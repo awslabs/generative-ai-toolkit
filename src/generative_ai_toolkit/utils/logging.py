@@ -26,11 +26,11 @@ import json
 import os
 import sys
 import time
-from typing import Any, Mapping, TextIO
 import traceback
+from collections.abc import Mapping
+from typing import Any, TextIO
 
 from generative_ai_toolkit.metrics.measurement import Measurement
-
 
 in_aws_lambda = os.environ.get("AWS_EXECUTION_ENV", "").startswith("AWS_Lambda_")
 

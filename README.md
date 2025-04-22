@@ -1,8 +1,11 @@
 # Generative AI Toolkit
 
-The **Generative AI Toolkit** is a lightweight library that covers the life cycle of LLM-based applications, including agents. Its purpose is to support developers in building and operating high quality LLM-based applications, over their entire life cycle, starting with the very first deployment, in an automated workflow.
+The **Generative AI Toolkit** is a lightweight library that covers the life cycle of LLM-based applications, including agents. Its purpose is to support developers in building and operating high quality LLM-based applications, over their entire life cycle, starting with the very first deployment, in an automated workflow:
 
-The Generative AI Toolkit makes it easy to measure and test the performance of LLM-based applications, during development as well as in production.
+- **Build new agents** using any of the LLM's supported by the Amazon Bedrock Converse API. Streaming responses are supported, and you can simply add your Python functions as tools. Conversation history is stored in Amazon DynamoDB, other backends can be added easily. Agents can be deployed as AWS Lambda functions (exposed via Function URL), or as containers on Amazon ECS or EKS.
+- Track in detail what your agents do with our **OpenTelemetry compatible tracing**. Out-of-the-box tracers for DynamoDB and AWS X-Ray are included, and it's easy to add custom tracers.
+- **Evaluate your agents** thoroughly with metrics. Use the out-of-the-box metrics such as Cost, Latency, Cosine similarity, or add your own custom metrics. Metrics can be exported to Amazon CloudWatch Metrics easily, allowing you to tap into the full power of Amazon CloudWatch for observability.
+- **Test your agents** on a deep level by writing assertions against the collected traces. Assert that your agents e.g. respond to users in the right way, and that they invoke the right tools, with the right inputs. A conversational mock of the Amazon Bedrock Converse API is included, so that you can make your tests deterministic and fast.
 
 The toolkit builds upon principles and methodologies detailed in our research paper:
 
@@ -84,6 +87,12 @@ Other available modifiers are:
 
 - `[run-agent]`: includes dependencies such as `gunicorn` that allow you to use `generative_ai_toolkit.run.agent.Runner` to expose your agent over HTTP.
 - `[evaluate]`: includes dependencies that allow you to run evaluations against traces.
+
+For type hints in your IDE, it is recommended to also install the boto3 stubs:
+
+```bash
+pip install boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2"
+```
 
 ### 2.2 Agent implementation
 

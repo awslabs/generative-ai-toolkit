@@ -12,33 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 import collections.abc
-from dataclasses import asdict, dataclass, field
+import datetime
 import itertools
 import traceback
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, Future, ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
+from enum import Enum
 from typing import (
     Any,
-    Callable,
-    Iterable,
-    Mapping,
-    Sequence,
     TypeVar,
 )
-from enum import Enum
 
-from generative_ai_toolkit.metrics import BaseMetric
+from generative_ai_toolkit.metrics import BaseMetric, Measurement
 from generative_ai_toolkit.test import (
+    AgentLike,
     Case,
     CaseTrace,
-    AgentLike,
     CaseTraceInfo,
     PassFail,
 )
 from generative_ai_toolkit.tracer import InMemoryTracer, Trace
 from generative_ai_toolkit.utils.logging import logger
-from generative_ai_toolkit.metrics import Measurement
 from generative_ai_toolkit.utils.ulid import Ulid
 
 
@@ -353,14 +349,14 @@ class GenerativeAIToolkit:
             val.values if isinstance(val, Permute) else [val]
             for val in agent_parameters.values()
         ]
-        default_agent_parameters = dict(tracer=lambda: InMemoryTracer())
+        default_agent_parameters = {"tracer": lambda: InMemoryTracer()}
         with ThreadPoolExecutor(
             max_workers=max_case_workers or GenerativeAIToolkit.max_case_workers,
             thread_name_prefix="case",
         ) as executor:
             nr_conversations = 0
             parameter_permutations = [
-                dict(zip(agent_parameters.keys(), combination))
+                dict(zip(agent_parameters.keys(), combination, strict=False))
                 for combination in itertools.product(*values)
             ]
             for case_nr, case in enumerate(cases):

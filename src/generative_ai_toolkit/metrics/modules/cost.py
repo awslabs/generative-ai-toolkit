@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from decimal import Decimal
+
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
 
 

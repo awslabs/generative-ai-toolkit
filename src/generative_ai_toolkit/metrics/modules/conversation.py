@@ -14,13 +14,11 @@
 
 import json
 import textwrap
-from typing import cast
 
 import boto3
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
 from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
-from generative_ai_toolkit.utils.typings import NonStreamingResponse
 from generative_ai_toolkit.utils.llm_response import json_parse
 
 
@@ -107,7 +105,7 @@ class ConversationExpectationMetric(BaseMetric):
                 }
             ],
         )
-        response = json_parse(cast(NonStreamingResponse, text_response))
+        response = json_parse(text_response)
 
         return Measurement(
             name="Correctness",

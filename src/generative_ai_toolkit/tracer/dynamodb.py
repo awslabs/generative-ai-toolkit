@@ -1,16 +1,17 @@
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any
+
+import boto3
+import boto3.session
+from boto3.dynamodb.conditions import Attr, Key
+
 from generative_ai_toolkit.tracer.tracer import (
     BaseTracer,
-    TraceContextProvider,
     Trace,
+    TraceContextProvider,
     TraceScope,
 )
-
-import boto3.session
-import boto3
-from boto3.dynamodb.conditions import Key, Attr
-
 from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
 
 
@@ -108,9 +109,9 @@ class DynamoDbTracer(BaseTracer):
                 break
             last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
 
-        auth_contexts = set(
+        auth_contexts = {
             item["auth_context"] for item in items if "auth_context" in item
-        )
+        }
         if len(auth_contexts) > 1:
             raise ValueError(f"Multiple auth contexts encountered: {auth_contexts}")
 

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from codecs import iterdecode
-from dataclasses import dataclass
-import json
 import http.client
+import json
 import urllib.request
-from typing import Iterator, Mapping
+from codecs import iterdecode
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
+
 import boto3
 import boto3.session
 from botocore.auth import SigV4Auth

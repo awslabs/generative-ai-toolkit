@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import boto3.session
-from datetime import datetime, timedelta
 import time
 import uuid
-from typing import Any, Dict, Iterable, Protocol
+from collections.abc import Iterable
+from datetime import datetime, timedelta
+from typing import Any, Protocol
+
+import boto3.session
+
 from generative_ai_toolkit.tracer import Trace
 from generative_ai_toolkit.tracer.tracer import TraceScope
 
@@ -68,7 +71,6 @@ class BedrockAgentAdapter(Protocol):
 
         model_inputs = []
         model_outputs = []
-        observations = []
         ag_input = []
         ag_output = []
         # TODO: at the moment we ignore rationale, invocationInput, and some observation node, the test are runig well but we may lose details
@@ -160,7 +162,7 @@ class BedrockAgentAdapter(Protocol):
                 final_response=final_response,
                 conversation_id=self.__conversation_id,
             )
-            for model_input, model_output in zip(model_inputs, model_outputs)
+            for model_input, model_output in zip(model_inputs, model_outputs, strict=False)
         ]
         self.__spans.extend(llm_invocation_spans)
 
@@ -175,7 +177,7 @@ class BedrockAgentAdapter(Protocol):
                 agent_version=agent_version,
                 conversation_id=self.__conversation_id,
             )
-            for tool_input, tool_output in zip(ag_input, ag_output)
+            for tool_input, tool_output in zip(ag_input, ag_output, strict=False)
         ]
         self.__spans.extend(tool_spans)
 
@@ -184,8 +186,8 @@ class BedrockAgentAdapter(Protocol):
     # TODO: make it static
     def __create_llm_invocation_span(
         self,
-        model_input: Dict[str, Any],
-        model_output: Dict[str, Any],
+        model_input: dict[str, Any],
+        model_output: dict[str, Any],
         parent_span: Trace,
         agent_id: str,
         session_id: str,
@@ -237,8 +239,8 @@ class BedrockAgentAdapter(Protocol):
     # TODO: make it static
     def __create_tool_span(
         self,
-        tool_input: Dict[str, Any],
-        tool_output: Dict[str, Any],
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
         trace_id: str,
         agent_span: Trace,
         session_id: str,
@@ -298,9 +300,9 @@ class BedrockAgentAdapter(Protocol):
 
 
 if __name__ == "__main__":
-    bedrockAgent_adapter = BedrockAgentAdapter()
-    answer = bedrockAgent_adapter.converse("What is the weather in Munich?")
-    traces = bedrockAgent_adapter.traces
+    bedrock_agent_adapter = BedrockAgentAdapter()
+    answer = bedrock_agent_adapter.converse("What is the weather in Munich?")
+    traces = bedrock_agent_adapter.traces
 
     # tracer = OtlpTracer()
     # for t in bedrockAgent_adapter.traces:

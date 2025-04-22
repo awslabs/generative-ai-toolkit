@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime, timezone
-from functools import wraps
+import inspect
 import sys
 import traceback
+from collections import deque
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
+from datetime import UTC, datetime
+from functools import wraps
 from typing import (
     Any,
-    Callable,
-    ContextManager,
-    Deque,
     Literal,
-    Mapping,
     Protocol,
     TextIO,
     TypeVar,
@@ -31,15 +31,12 @@ from typing import (
     overload,
     runtime_checkable,
 )
-from collections.abc import Sequence
-from collections import deque
-import inspect
 
 from generative_ai_toolkit.tracer.context import (
-    TraceContext,
-    TraceContextUpdate,
-    TraceContextProvider,
     ContextVarTraceContextProvider,
+    TraceContext,
+    TraceContextProvider,
+    TraceContextUpdate,
 )
 from generative_ai_toolkit.tracer.trace import Trace, TraceScope
 from generative_ai_toolkit.utils.logging import SimpleLogger
@@ -66,7 +63,7 @@ class Tracer(Protocol):
         scope: TraceScope | None = None,
         resource_attributes: Mapping[str, Any] | None = None,
         span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
-    ) -> ContextManager[Trace]: ...
+    ) -> AbstractContextManager[Trace]: ...
 
     def get_traces(
         self,
@@ -207,7 +204,7 @@ class ContextAwareSpanPersistor:
         self.resource_attributes = resource_attributes
 
     def __enter__(self):
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         context = self.trace_context.context
         self.trace = Trace(
             self.span_name,
@@ -222,7 +219,7 @@ class ContextAwareSpanPersistor:
         return self.trace
 
     def __exit__(self, exc_type, exc_value, _traceback):
-        self.trace.ended_at = datetime.now(timezone.utc)
+        self.trace.ended_at = datetime.now(UTC)
         self._reset()
         if exc_type:
             self.trace.span_status = "ERROR"
@@ -342,7 +339,7 @@ class InMemoryTracer(BaseTracer):
         trace_context_provider: TraceContextProvider | None = None,
     ) -> None:
         super().__init__(trace_context_provider=trace_context_provider)
-        self._memory: Deque[Trace] = deque(maxlen=memory_size)
+        self._memory: deque[Trace] = deque(maxlen=memory_size)
 
     def persist(self, trace: Trace):
         self._memory.append(trace)

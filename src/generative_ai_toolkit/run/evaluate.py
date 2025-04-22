@@ -13,19 +13,19 @@
 # limitations under the License.
 
 import os
-from itertools import groupby
 import random
-from typing import Sequence
 import time
+from collections.abc import Sequence
+from itertools import groupby
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 
 from generative_ai_toolkit.evaluate import GenerativeAIToolkit
+from generative_ai_toolkit.metrics import BaseMetric
 from generative_ai_toolkit.tracer import Trace
 from generative_ai_toolkit.tracer.dynamodb import DynamoDbTracer
 from generative_ai_toolkit.utils.logging import logger
-from generative_ai_toolkit.metrics import BaseMetric
 
 
 class _AWSLambdaRunner:

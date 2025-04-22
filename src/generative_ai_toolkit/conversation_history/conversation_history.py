@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Protocol, Sequence
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
 
-import boto3.session
 import boto3
+import boto3.session
 from boto3.dynamodb.conditions import Key
 
-from generative_ai_toolkit.utils.typings import Message
+if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import MessageOutputTypeDef
+
 from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
 from generative_ai_toolkit.utils.ulid import Ulid
 
@@ -52,13 +55,13 @@ class ConversationHistory(Protocol):
         ...
 
     @property
-    def messages(self) -> Sequence[Message]:
+    def messages(self) -> Sequence["MessageOutputTypeDef"]:
         """
         All messages of the current conversation
         """
         ...
 
-    def add_message(self, msg: Message) -> None:
+    def add_message(self, msg: "MessageOutputTypeDef") -> None:
         """
         Add a message to the conversation history
         """
@@ -73,7 +76,7 @@ class ConversationHistory(Protocol):
 
 class InMemoryConversationHistory(ConversationHistory):
     _conversation_id: str
-    _message_cache: dict[str | None, dict[str, list[Message]]]
+    _message_cache: dict[str | None, dict[str, list["MessageOutputTypeDef"]]]
     _auth_context: str | None
 
     def __init__(
@@ -97,13 +100,13 @@ class InMemoryConversationHistory(ConversationHistory):
     def set_auth_context(self, auth_context: str | None):
         self._auth_context = auth_context
 
-    def add_message(self, msg: Message) -> None:
+    def add_message(self, msg: "MessageOutputTypeDef") -> None:
         self._message_cache.setdefault(self._auth_context, {}).setdefault(
             self._conversation_id, []
         ).append(msg)
 
     @property
-    def messages(self) -> Sequence[Message]:
+    def messages(self) -> Sequence["MessageOutputTypeDef"]:
         return self._message_cache.get(self._auth_context, {}).get(
             self._conversation_id, []
         )
@@ -145,8 +148,8 @@ class DynamoDbConversationHistory(ConversationHistory):
     def set_auth_context(self, auth_context: str | None):
         self._auth_context = auth_context
 
-    def add_message(self, msg: Message) -> None:
-        now = datetime.now(timezone.utc)
+    def add_message(self, msg: "MessageOutputTypeDef") -> None:
+        now = datetime.now(UTC)
         item = {
             "pk": f"CONV#{self._auth_context or "_"}#{self.conversation_id}",
             "sk": f"MSG#{self.identifier or "_"}#{int(now.timestamp() * 1000):014x}",
@@ -170,7 +173,7 @@ class DynamoDbConversationHistory(ConversationHistory):
             raise ValueError(f"Table {self.table.name} does not exist") from e
 
     @property
-    def messages(self) -> Sequence[Message]:
+    def messages(self) -> Sequence["MessageOutputTypeDef"]:
         collected = []
         last_evaluated_key_param: dict[str, Any] = {}
         while True:
@@ -187,10 +190,10 @@ class DynamoDbConversationHistory(ConversationHistory):
                 raise ValueError(f"Table {self.table.name} does not exist") from e
             collected.extend(
                 [
-                    Message(
-                        role=item["role"],
-                        content=DynamoDbMapper.from_dynamo(item["content"]),
-                    )
+                    {
+                        "role": item["role"],
+                        "content": DynamoDbMapper.from_dynamo(item["content"]),
+                    }
                     for item in DynamoDbMapper.from_dynamo(response["Items"])
                 ]
             )

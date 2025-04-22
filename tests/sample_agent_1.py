@@ -12,10 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from generative_ai_toolkit.metrics.base_metric import BaseMetric
-from generative_ai_toolkit.metrics.measurement import (
-    Measurement,
-    Unit,
-)
+import boto3.session
 
-__all__ = ["BaseMetric", "Measurement", "Unit"]
+from generative_ai_toolkit.agent import BedrockConverseAgent
+
+
+def sample_agent_1(session: boto3.session.Session | None = None):
+    agent = BedrockConverseAgent(model_id="amazon.nova-lite-v1:0", session=session)
+
+    def weather_tool(city: str, unit: str = "celsius") -> str:
+        """
+        Get the weather report for a city
+
+        Parameters
+        ---
+        city: str
+          The city
+        unit: str
+          The unit of degrees (e.g. celsius)
+        """
+        return f"The weather in {city} is 20 degrees {unit}."
+
+    agent.register_tool(weather_tool)
+    return agent

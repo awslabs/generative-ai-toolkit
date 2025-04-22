@@ -13,17 +13,17 @@
 # limitations under the License.
 
 import json
+from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from typing import (
-    Callable,
-    Iterable,
     Protocol,
     TypedDict,
     Unpack,
 )
-from contextvars import ContextVar
 
-from pydantic import BaseModel, Field
 from flask import Flask, Request, Response, request
+from pydantic import BaseModel, Field
+
 from generative_ai_toolkit.utils.logging import logger
 
 

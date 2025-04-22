@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 dependencies = [
     "boto3~=1.34.140",
+    "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
 ]
 authors = [
   {name = "Otto Kruse", email = "ottokrus@amazon.nl"},
@@ -55,3 +56,7 @@ where = ["src"]
 
 [tool.setuptools.exclude-package-data]
 generative_ai_toolkit = ["tests/*"]
+
+[tool.ruff]
+lint.select = ["F", "E", "W", "C", "N", "I", "PL", "UP", "B"]
+lint.ignore = ["PLR0912", "PLR0913", "PLR0915", "PLR2004", "C901", "E501"] # todo: tighten

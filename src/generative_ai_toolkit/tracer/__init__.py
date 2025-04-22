@@ -14,14 +14,14 @@
 
 from .trace import Trace
 from .tracer import (
-    Tracer,
-    NoopTracer,
-    InMemoryTracer,
-    traced,
+    BaseTracer,
     HumanReadableTracer,
+    InMemoryTracer,
+    NoopTracer,
     StructuredLogsTracer,
     TeeTracer,
-    BaseTracer,
+    Tracer,
+    traced,
 )
 
 __all__ = [
