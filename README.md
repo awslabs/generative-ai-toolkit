@@ -265,14 +265,13 @@ If you don't want to register a Python function as tool, but have a tool with to
 
 ```python
 from typing import Any
-from generative_ai_toolkit.agent.tool import ToolSpec
+from mypy_boto3_bedrock_runtime.type_defs import ToolSpecificationTypeDef
 
 class MyTool:
-    name = "my-tool"
 
     @property
-    def tool_spec(self) -> ToolSpec:
-        return {"toolSpec":{"name":"my-tool","description":"This tool helps with ...", "inputSchema": {...}}}
+    def tool_spec(self) -> ToolSpecificationTypeDef:
+        return {"name":"my-tool","description":"This tool helps with ...", "inputSchema": {...}}
 
     def invoke(self, *args, **kwargs) -> Any:
         return "Tool response"

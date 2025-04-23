@@ -289,7 +289,7 @@ class Case:
             ],
         )
         return Case(
-            name=case_name or f"Tool use: {tool.name}",
+            name=case_name or f"Tool use: {tool.tool_spec["name"]}",
             user_inputs=[get_text(response)],
         )
 

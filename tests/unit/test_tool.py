@@ -14,7 +14,7 @@
 
 import pytest
 
-from generative_ai_toolkit.agent import BedrockConverseTool
+from generative_ai_toolkit.agent import BedrockConverseTool, Tool
 
 
 def test_tool():
@@ -23,14 +23,30 @@ def test_tool():
         """This is a sample function"""
         return "Hello World"
 
-    tool = BedrockConverseTool(sample_function)
-    assert tool.name == "sample_function"
+    tool: Tool = BedrockConverseTool(sample_function)
     assert tool.tool_spec == {
-        "toolSpec": {
-            "name": "sample_function",
-            "description": "This is a sample function",
-            "inputSchema": {"json": {"type": "object", "properties": {}}},
-        }
+        "name": "sample_function",
+        "description": "This is a sample function",
+        "inputSchema": {"json": {"type": "object", "properties": {}}},
+    }
+    assert tool.invoke() == "Hello World"
+
+
+def test_tool_with_multiline_description():
+
+    def sample_function():
+        """
+        This is a sample function.
+
+        And it's great!
+        """
+        return "Hello World"
+
+    tool: Tool = BedrockConverseTool(sample_function)
+    assert tool.tool_spec == {
+        "name": "sample_function",
+        "description": "This is a sample function.\n\nAnd it's great!",
+        "inputSchema": {"json": {"type": "object", "properties": {}}},
     }
     assert tool.invoke() == "Hello World"
 
@@ -39,7 +55,9 @@ def test_tool_with_parameters():
 
     def sample_function_with_parameters(parameter1: str, parameter2: int):
         """
-        This is a sample function with parameters
+        This is a sample function with parameters.
+
+        And it's great!
 
         Parameters
         ---
@@ -50,28 +68,26 @@ def test_tool_with_parameters():
         """
         return f"Hello World {parameter1} {parameter2}"
 
-    tool = BedrockConverseTool(sample_function_with_parameters)
-    assert tool.name == "sample_function_with_parameters"
+    tool: Tool = BedrockConverseTool(sample_function_with_parameters)
     assert tool.tool_spec == {
-        "toolSpec": {
-            "name": "sample_function_with_parameters",
-            "description": "This is a sample function with parameters",
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "parameter1": {
-                            "type": "string",
-                            "description": "The first parameter",
-                        },
-                        "parameter2": {
-                            "type": "integer",
-                            "description": "The second parameter",
-                        },
+        "name": "sample_function_with_parameters",
+        "description": "This is a sample function with parameters.\n\nAnd it's great!",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "parameter1": {
+                        "type": "string",
+                        "description": "The first parameter",
                     },
-                }
-            },
-        }
+                    "parameter2": {
+                        "type": "integer",
+                        "description": "The second parameter",
+                    },
+                },
+                "required": ["parameter1", "parameter2"],
+            }
+        },
     }
     assert tool.invoke(parameter1="foo", parameter2=1) == "Hello World foo 1"
 
@@ -93,7 +109,7 @@ def test_tool_with_optional_parameters():
         """
         return f"Hello World {parameter1} {parameter2}"
 
-    tool1 = BedrockConverseTool(sample_function_with_optional_parameters_1)
+    tool1: Tool = BedrockConverseTool(sample_function_with_optional_parameters_1)
 
     def sample_function_with_optional_parameters_2(
         parameter1: str, parameter2: int | None = None
@@ -112,30 +128,30 @@ def test_tool_with_optional_parameters():
             parameter2 = 1
         return f"Hello World {parameter1} {parameter2}"
 
-    tool2 = BedrockConverseTool(sample_function_with_optional_parameters_2)
+    tool2: Tool = BedrockConverseTool(sample_function_with_optional_parameters_2)
 
     for index, tool in enumerate([tool1, tool2]):
-        assert tool.name == f"sample_function_with_optional_parameters_{index + 1}"
         assert tool.tool_spec == {
-            "toolSpec": {
-                "name": f"sample_function_with_optional_parameters_{index + 1}",
-                "description": "This is a sample function with optional parameters",
-                "inputSchema": {
-                    "json": {
-                        "type": "object",
-                        "properties": {
-                            "parameter1": {
-                                "type": "string",
-                                "description": "The first parameter",
-                            },
-                            "parameter2": {
-                                "type": "integer",
-                                "description": "The second parameter",
-                            },
+            "name": f"sample_function_with_optional_parameters_{index + 1}",
+            "description": "This is a sample function with optional parameters",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "parameter1": {
+                            "type": "string",
+                            "description": "The first parameter",
                         },
-                    }
-                },
-            }
+                        "parameter2": {
+                            "type": "integer",
+                            "description": "The second parameter",
+                        },
+                    },
+                    "required": [
+                        "parameter1",
+                    ],
+                }
+            },
         }
         assert tool.invoke(parameter1="foo") == "Hello World foo 1"
 

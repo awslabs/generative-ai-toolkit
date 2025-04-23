@@ -493,7 +493,7 @@ class BedrockConverseAgent(Agent):
         """
         if callable(tool):
             tool = BedrockConverseTool(tool)
-        self._tools[tool.name] = tool
+        self._tools[tool.tool_spec["name"]] = tool
         return tool
 
     @staticmethod
@@ -639,11 +639,15 @@ class BedrockConverseAgent(Agent):
                 BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
             ]
             tools_available = (
-                {tool.name: tool for tool in tools} if tools is not None else {}
+                {tool.tool_spec["name"]: tool for tool in tools}
+                if tools is not None
+                else {}
             )
         if tools_available:
             request["toolConfig"] = {
-                "tools": [tool.tool_spec for tool in tools_available.values()],
+                "tools": [
+                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
+                ],
             }
 
         texts: list[str] = []
@@ -799,11 +803,15 @@ class BedrockConverseAgent(Agent):
                 BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
             ]
             tools_available = (
-                {tool.name: tool for tool in tools} if tools is not None else {}
+                {tool.tool_spec["name"]: tool for tool in tools}
+                if tools is not None
+                else {}
             )
         if tools_available:
             request["toolConfig"] = {
-                "tools": [tool.tool_spec for tool in tools_available.values()],
+                "tools": [
+                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
+                ],
             }
 
         def update_content_blocks(

@@ -20,17 +20,13 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, Protocol, Union, get_args, get_origin
 
 if TYPE_CHECKING:
-    from mypy_boto3_bedrock_runtime.type_defs import ToolTypeDef
+    from mypy_boto3_bedrock_runtime.type_defs import ToolSpecificationTypeDef
 
 
 class Tool(Protocol):
-    name: str
-    """
-    The name of the tool
-    """
 
     @property
-    def tool_spec(self) -> "ToolTypeDef":
+    def tool_spec(self) -> "ToolSpecificationTypeDef":
         """
         The tool spec for this tool, that can be used in the Amazon Bedrock Converse API
         """
@@ -44,10 +40,6 @@ class Tool(Protocol):
 
 
 class BedrockConverseTool(Tool):
-    name: str
-    """
-    The name of the tool
-    """
 
     def __init__(self, func: Callable):
         """
@@ -86,8 +78,7 @@ class BedrockConverseTool(Tool):
             self.description = docstring
             self.parameter_description = ""
         self.func = func
-        self.name = func.__name__
-        self.parameters = self._get_parameters()
+        self.parameters, self.required_parameters = self._get_parameters()
 
         # ensure creating tool_spec works
         try:
@@ -104,7 +95,7 @@ class BedrockConverseTool(Tool):
         """
         return self.func(**kwargs)
 
-    def _get_parameters(self) -> dict[str, dict[str, Any]]:
+    def _get_parameters(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
         sig = inspect.signature(self.func)
         param_descriptions = self._parse_parameter_docstring()
         parameters = {}
@@ -124,7 +115,11 @@ class BedrockConverseTool(Tool):
                 ),
                 "description": param_descriptions[name],
             }
-        return parameters
+        return parameters, [
+            param.name
+            for param in sig.parameters.values()
+            if param.default is inspect.Parameter.empty
+        ]
 
     def _parse_parameter_docstring(self) -> dict[str, str]:
         param_descriptions = {}
@@ -138,26 +133,31 @@ class BedrockConverseTool(Tool):
         return param_descriptions
 
     @property
-    def tool_spec(self) -> "ToolTypeDef":
+    def tool_spec(self) -> "ToolSpecificationTypeDef":
         """
         The tool spec for this tool, that can be used in the Amazon Bedrock Converse API
         """
         return self._tool_spec
 
-    def create_tool_spec(self) -> "ToolTypeDef":
+    def create_tool_spec(self) -> "ToolSpecificationTypeDef":
         properties = {}
         for name, details in self.parameters.items():
             properties[name] = {
                 "type": self._python_type_to_json_type(details["annotation"]),
                 "description": details["description"],
             }
-        return {
-            "toolSpec": {
-                "name": self.name,
-                "description": self.description,
-                "inputSchema": {"json": {"type": "object", "properties": properties}},
-            }
+        json = {
+            "type": "object",
+            "properties": properties,
         }
+        tool_spec: ToolSpecificationTypeDef = {
+            "name": self.func.__name__,
+            "description": self.description,
+            "inputSchema": {"json": json},
+        }
+        if self.required_parameters:
+            json["required"] = self.required_parameters
+        return tool_spec
 
     def _python_type_to_json_type(self, python_type: Any) -> str:
         origin = get_origin(python_type)
