@@ -699,7 +699,7 @@ class _ToolAssertor:
         if not tool_invocations:
             raise AssertionError(f"Tool {tool_name} was not invoked")
         if with_error is None:
-            pass
+            return _ToolInputOutputAssertor(tool_invocations)
         errors = [
             trace.attributes["ai.tool.error"]
             for trace in tool_invocations

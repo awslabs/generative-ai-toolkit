@@ -16,7 +16,8 @@ import inspect
 import re
 import textwrap
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol, get_origin
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Protocol, Union, get_args, get_origin
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.type_defs import ToolTypeDef
@@ -160,6 +161,13 @@ class BedrockConverseTool(Tool):
 
     def _python_type_to_json_type(self, python_type: Any) -> str:
         origin = get_origin(python_type)
+
+        # Handle optionality unions, e.g. List[str] | None
+        if origin in (UnionType, Union):
+            not_none = [t for t in get_args(python_type) if t is not type(None)]
+            if len(not_none) == 1:
+                return self._python_type_to_json_type(not_none[0])
+            raise ValueError(f"Unsupported union type: {python_type}")
 
         primitives = {
             int: "integer",
