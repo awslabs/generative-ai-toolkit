@@ -14,6 +14,7 @@
 
 import datetime
 import functools
+import html
 import json
 import textwrap
 from collections.abc import Iterable, Mapping, Sequence
@@ -48,7 +49,9 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
     trace_summaries: list[TraceSummary] = []
     by_start_date = sorted(traces, key=lambda t: t.started_at)
     by_trace_id = sorted(by_start_date, key=lambda t: t.trace_id)
-    for trace_id, traces_for_trace_id_iter in groupby(by_trace_id, key=lambda t: t.trace_id):
+    for trace_id, traces_for_trace_id_iter in groupby(
+        by_trace_id, key=lambda t: t.trace_id
+    ):
         traces_for_trace_id = list(traces_for_trace_id_iter)
         root_trace = traces_for_trace_id[0]
         assert root_trace.parent_span is None
@@ -124,7 +127,7 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
             {json.dumps(rest_attributes)}
             """
         )
-    return res
+    return html.escape(res)
 
 
 def get_markdown_for_llm_invocation(llm_trace: Trace):
@@ -192,7 +195,7 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             {json.dumps(rest_attributes)}
             """
         )
-    return res
+    return html.escape(res)
 
 
 def without(d: Mapping, keys: Sequence[str]):
@@ -200,7 +203,7 @@ def without(d: Mapping, keys: Sequence[str]):
 
 
 def get_markdown_generic(trace: Trace):
-    return textwrap.dedent(
+    res = textwrap.dedent(
         f"""
         **Trace type**
         {trace.attributes.get("ai.trace.type")}
@@ -212,6 +215,7 @@ def get_markdown_generic(trace: Trace):
         {json.dumps(without(trace.attributes, ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"]))}
         """
     )
+    return html.escape(res)
 
 
 def get_markdown_for_measurement(measurement: Measurement):
@@ -236,7 +240,7 @@ def get_markdown_for_measurement(measurement: Measurement):
             """
         )
 
-    return res
+    return html.escape(res)
 
 
 def chat_messages_from_trace_summary(
