@@ -30,7 +30,7 @@ import traceback
 from collections.abc import Mapping
 from typing import Any, TextIO
 
-from generative_ai_toolkit.metrics.measurement import Measurement
+from generative_ai_toolkit.utils.cloudwatch import MetricData
 
 in_aws_lambda = os.environ.get("AWS_EXECUTION_ENV", "").startswith("AWS_Lambda_")
 
@@ -100,7 +100,7 @@ class SimpleLogger:
 
     def metric(
         self,
-        measurement: Measurement,
+        metric_data: MetricData,
         namespace: str,
         message="CloudWatch Embedded Metric",
         common_dimensions: Mapping[str, str] | None = None,
@@ -109,8 +109,8 @@ class SimpleLogger:
     ):
         common_dimensions = {**common_dimensions} if common_dimensions else {}
         dimension_sets = (
-            [{**dim_set, **common_dimensions} for dim_set in measurement.dimensions]
-            if measurement.dimensions
+            [{**dim_set, **common_dimensions} for dim_set in metric_data.dimensions]
+            if metric_data.dimensions
             else [common_dimensions]
         )
         accumulated_dimensions: Mapping[str, str] = {}
@@ -120,7 +120,7 @@ class SimpleLogger:
         if len(accumulated_dimensions) > 9:
             raise ValueError("More than 9 dimensions provided")
         log_data: Mapping[str, Any] = {
-            measurement.name: measurement.value,
+            metric_data.name: metric_data.value,
         }
         for k, v in kwargs.items():
             if v is not None:
@@ -134,8 +134,8 @@ class SimpleLogger:
                         {
                             "Metrics": [
                                 {
-                                    "Name": measurement.name,
-                                    "Unit": measurement.unit.value,
+                                    "Name": metric_data.name,
+                                    "Unit": metric_data.unit.value,
                                 }
                             ],
                             "Dimensions": [
