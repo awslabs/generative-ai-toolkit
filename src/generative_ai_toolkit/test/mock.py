@@ -14,7 +14,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, Unpack
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 class ToolUseOutput(TypedDict):
     name: str
     input: dict[str, Any]
+    toolUseId: NotRequired[str]
 
 
 RealResponse = Literal["RealResponse"]
@@ -114,7 +115,7 @@ class MockBedrockConverse:
         text_output: Sequence[str] = (),
     ):
         tool_uses: list[ContentBlockOutputTypeDef] = [
-            {"toolUse": {**t, "toolUseId": uuid4().hex}} for t in tool_use_output
+            {"toolUse": {"toolUseId": uuid4().hex, **t}} for t in tool_use_output
         ]
         texts: list[ContentBlockOutputTypeDef] = [{"text": t} for t in text_output]
         self.mock_responses.append(self._get_raw_response([*tool_uses, *texts]))

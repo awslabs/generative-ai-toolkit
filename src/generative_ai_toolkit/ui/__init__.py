@@ -99,14 +99,14 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     res = textwrap.dedent(
         f"""
         **Input**
-        {json.dumps(tool_input)}
+        {tool_input}
         """
     )
     if tool_output:
         res += textwrap.dedent(
             f"""
             **Output**
-            {json.dumps(tool_output)}
+            {tool_output}
             """
         )
     if tool_error:

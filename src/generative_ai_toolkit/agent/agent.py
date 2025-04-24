@@ -31,7 +31,11 @@ import boto3
 import boto3.session
 import botocore.exceptions
 
-from generative_ai_toolkit.agent.tool import BedrockConverseTool, Tool
+from generative_ai_toolkit.agent.tool import (
+    BedrockConverseTool,
+    Tool,
+    ToolResultJsonEncoder,
+)
 from generative_ai_toolkit.conversation_history import (
     ConversationHistory,
     InMemoryConversationHistory,
@@ -230,6 +234,7 @@ class BedrockConverseAgent(Agent):
         tools: Sequence[Callable] | None = None,
         max_successive_tool_invocations: int = 10,
         executor: Executor | None = None,
+        tool_result_json_encoder: type[json.JSONEncoder] | None = None,
     ) -> None:
         """
         Create an Agent that will use the Bedrock Converse API to operate.
@@ -278,6 +283,8 @@ class BedrockConverseAgent(Agent):
             Maximum number of consecutive tool calls, by default 10
         executor : Executor | None, optional
             Executor for parallelizing tool invocations. By default, a ThreadPoolExecutor with 8 workers is used.
+        tool_result_json_encoder : type[json.JSONEncoder], optional
+            Custom JSON Encoder to encode tool results with, prior to sending them to the LLM
         """
         self._system_prompt = system_prompt
         self._model_id = model_id
@@ -357,6 +364,9 @@ class BedrockConverseAgent(Agent):
         self.max_converse_iterations = max_successive_tool_invocations + 1
         self.executor = executor or ThreadPoolExecutor(
             max_workers=8, thread_name_prefix="tool-invocation"
+        )
+        self.tool_result_json_encoder: type[json.JSONEncoder] = (
+            tool_result_json_encoder or ToolResultJsonEncoder
         )
 
     @classmethod
@@ -532,7 +542,7 @@ class BedrockConverseAgent(Agent):
             trace.add_attribute("ai.tool.input", tool_use["input"])
 
             tool_error = None
-            tool_response: dict | None = None
+            tool_response_json: Any = None
             try:
                 tool = tools.get(tool_name)
                 if not tool:
@@ -541,6 +551,11 @@ class BedrockConverseAgent(Agent):
                 trace.add_attribute("ai.tool.output", tool_response)
                 if not isinstance(tool_response, dict):
                     tool_response = {"toolResponse": tool_response}
+                # Ensure tool response can be represented as JSON
+                # (otherwise boto3 will throw errors upon calling converse)
+                tool_response_json = json.loads(
+                    json.dumps(tool_response, cls=self.tool_result_json_encoder)
+                )
             except Exception as err:
                 tool_error = err
                 trace.add_attribute("ai.tool.error", err)
@@ -551,8 +566,8 @@ class BedrockConverseAgent(Agent):
                 "content": [
                     {
                         "json": (
-                            tool_response
-                            if tool_response
+                            tool_response_json
+                            if tool_response_json
                             else {
                                 "message": (
                                     f"Error invoking tool: {tool_error}"
