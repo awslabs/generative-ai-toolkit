@@ -235,6 +235,58 @@ agent = BedrockConverseAgent(
 )
 ```
 
+##### Reasoning
+
+If you want to use reasoning with a model that supports it (e.g. `anthropic.claude-3-7-sonnet-20250219-v1:0`), specify `additional_model_request_fields`:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-7-sonnet-20250219-v1:0",
+    additional_model_request_fields={
+        "reasoning_config": {"type": "enabled", "budget_tokens": 1024}
+    },
+)
+```
+
+Then, when calling `converse` or `converse_stream`, reasoning texts will be included within `<thinking>` tags in the output:
+
+```python
+response = agent.converse("How should I make Spaghetti Carbonara?")
+print(response)
+```
+
+Would print e.g.:
+
+```
+<thinking>
+The user is asking for a recipe for Spaghetti Carbonara. I have a tool available called `get_recipe` that can provide recipes.
+
+The required parameter for this function is:
+- dish: The name of the dish to get a recipe for
+
+In this case, the dish is "Spaghetti Carbonara". This is clearly stated in the user's request, so I can call the function with this parameter.
+</thinking>
+
+I can help you with a recipe for Spaghetti Carbonara! Let me get that for you.
+Here is the recipe ...
+```
+
+If you do not want to include the reasoning texts in the output, you can turn that off like so:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-7-sonnet-20250219-v1:0",
+    additional_model_request_fields={
+        "reasoning_config": {"type": "enabled", "budget_tokens": 1024}
+    },
+    include_reasoning_text_within_thinking_tags=False, # set this to False
+)
+```
+
 #### Tools
 
 If you want to give the agent access to tools, you can define them as Python functions, and register them with the agent. Your Python function must have type annotations for input and output, and a docstring like so:
@@ -373,6 +425,8 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 | `ai.llm.response.usage`                  | Usage metrics from the LLM response                                                                                                                                                               |
 | `ai.llm.response.metrics`                | Additional metrics from the LLM response                                                                                                                                                          |
 | `ai.llm.response.error`                  | Error information if the LLM request fails                                                                                                                                                        |
+| `ai.llm.response.trace`                  | Trace information                                                                                                                                                                                 |
+| `ai.llm.response.performance.config`     | The performance config                                                                                                                                                                            |
 | `ai.agent.response`                      | The final concatenated response from the agent                                                                                                                                                    |
 | `service.name`                           | Name of the service, set to the class name of the agent                                                                                                                                           |
 

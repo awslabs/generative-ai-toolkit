@@ -159,7 +159,7 @@ class Trace:
             },
         }
 
-    def as_human_readable(self) -> str:
+    def as_human_readable(self, max_length=160, max_lines=-1) -> str:
         BLUE = "\033[94m"  # noqa: N806
         GREEN = "\033[92m"  # noqa: N806
         YELLOW = "\033[93m"  # noqa: N806
@@ -170,12 +170,12 @@ class Trace:
         CYAN = "\033[96m"  # noqa: N806
 
         def truncate(
-            text: str, max_length=200, max_lines=1, indent_subsequent_lines=0
+            text: str, max_length=max_length, max_lines=1, indent_subsequent_lines=0
         ) -> str:
             """Helper to truncate long strings"""
             text = str(text).strip().replace("\n", "\\n")
             lines: list[str] = []
-            for i in range(max_lines):
+            for i in range(max_lines if max_lines >= 0 else 999):
                 fragment = text[(i * max_length) : (i + 1) * max_length].strip()
                 if not fragment:
                     break
@@ -183,6 +183,16 @@ class Trace:
                     fragment = fragment[: max_length - 3] + "..."
                 lines.append(fragment)
             return f"\n{indent_subsequent_lines * " "}".join(lines)
+
+        max_prefix_length = 16
+
+        def truncate_multiline(
+            title: str,
+            text: str,
+            max_lines=max_lines,
+        ):
+            prefix = f"{' ' * max_prefix_length}{title}: "[-max_prefix_length:]
+            return f"{prefix}{truncate(text, max_lines=max_lines, indent_subsequent_lines=len(prefix))}"
 
         attributes = self.attributes
         important_attrs = {
@@ -210,7 +220,7 @@ class Trace:
             )
         )
         attrs_str = " ".join(
-            f"{k}='{v if type(v) in (int, bool, float) else truncate(v if type(v) is str else json.dumps(v), 80) }'"
+            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else json.dumps(v), 80) }"
             for k, v in important_attrs.items()
         )
 
@@ -223,16 +233,10 @@ class Trace:
             f"{CYAN}{self.resource_attributes.get("service.name","<missing service.name>")}{RESET} "
             f"{span_kind_color}{self.span_kind}{RESET} "
             f"{start_time} - {self.span_name}"
-            f"{f' ({YELLOW}{attrs_str}{RESET})' if attrs_str else ''}"
+            f"\n{f'  {YELLOW}{attrs_str}{RESET}' if attrs_str else ''}"
         )
 
         trace_type = attributes.get("ai.trace.type")
-
-        def truncate_multiline(
-            title: str, text: str, max_lines=4, max_prefix_length=14
-        ):
-            prefix = f"{' ' * max_prefix_length}{title}: "[-max_prefix_length:]
-            return f"{prefix}{truncate(text, max_lines=max_lines, indent_subsequent_lines=len(prefix))}"
 
         if trace_type == "llm-invocation":
             messages = attributes.get("ai.llm.request.messages", [])

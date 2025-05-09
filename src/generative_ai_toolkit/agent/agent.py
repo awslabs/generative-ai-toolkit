@@ -16,6 +16,7 @@ import contextvars
 import json
 import re
 import weakref
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import (
@@ -24,7 +25,6 @@ from typing import (
     Literal,
     Protocol,
     Unpack,
-    cast,
 )
 
 import boto3
@@ -49,15 +49,14 @@ from generative_ai_toolkit.tracer.context import (
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import (
-        ContentBlockDeltaEventTypeDef,
-        ContentBlockDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ConverseRequestTypeDef,
+        ConverseStreamOutputTypeDef,
         ConverseStreamRequestTypeDef,
         GuardrailStreamConfigurationTypeDef,
         InferenceConfigurationTypeDef,
         MessageOutputTypeDef,
-        MessageTypeDef,
+        MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ToolResultBlockUnionTypeDef,
@@ -95,7 +94,7 @@ class Agent(Protocol):
         ...
 
     @property
-    def messages(self) -> Sequence["MessageOutputTypeDef"]:
+    def messages(self) -> Sequence["MessageUnionTypeDef"]:
         """
         Get the messages sent to the agent so far (for the current conversation)
         """
@@ -235,6 +234,7 @@ class BedrockConverseAgent(Agent):
         max_successive_tool_invocations: int = 10,
         executor: Executor | None = None,
         tool_result_json_encoder: type[json.JSONEncoder] | None = None,
+        include_reasoning_text_within_thinking_tags=True,
     ) -> None:
         """
         Create an Agent that will use the Bedrock Converse API to operate.
@@ -285,6 +285,8 @@ class BedrockConverseAgent(Agent):
             Executor for parallelizing tool invocations. By default, a ThreadPoolExecutor with 8 workers is used.
         tool_result_json_encoder : type[json.JSONEncoder], optional
             Custom JSON Encoder to encode tool results with, prior to sending them to the LLM
+        include_reasoning_text_within_thinking_tags : bool
+            Should reasoning texts be included (within <thinking> tags) in the output of converse and converse_stream? (Default: True)
         """
         self._system_prompt = system_prompt
         self._model_id = model_id
@@ -368,6 +370,9 @@ class BedrockConverseAgent(Agent):
         self.tool_result_json_encoder: type[json.JSONEncoder] = (
             tool_result_json_encoder or ToolResultJsonEncoder
         )
+        self.include_reasoning_text_within_thinking_tags = (
+            include_reasoning_text_within_thinking_tags
+        )
 
     @classmethod
     def _prune_instances_used(cls):
@@ -414,7 +419,7 @@ class BedrockConverseAgent(Agent):
             span.add_attribute("ai.conversation.history.messages", messages)
             return messages
 
-    def _add_message(self, msg: "MessageOutputTypeDef") -> None:
+    def _add_message(self, msg: "MessageUnionTypeDef") -> None:
         """
         Add a message to the conversation history
         """
@@ -691,6 +696,14 @@ class BedrockConverseAgent(Agent):
                     )
                     trace.add_attribute("ai.llm.response.usage", response["usage"])
                     trace.add_attribute("ai.llm.response.metrics", response["metrics"])
+                    if "trace" in response:
+                        trace.add_attribute("ai.llm.response.trace", response["trace"])
+                    if "performanceConfig" in response:
+                        trace.add_attribute(
+                            "ai.llm.response.performance.config",
+                            response["performanceConfig"],
+                        )
+
                 except botocore.exceptions.ClientError as err:
                     trace.add_attribute("ai.llm.response.error", err.response)
                     raise
@@ -699,7 +712,15 @@ class BedrockConverseAgent(Agent):
             message = response["output"].get("message")
             if message:
                 for msg_content in message["content"]:
-                    if "text" in msg_content:
+                    if self.include_reasoning_text_within_thinking_tags:
+                        reasoning_text = (
+                            msg_content.get("reasoningContent", {})
+                            .get("reasoningText", {})
+                            .get("text")
+                        )
+                        if reasoning_text:
+                            texts.append(f"<thinking>\n{reasoning_text}\n</thinking>\n")
+                    if "text" in msg_content and msg_content["text"]:
                         texts.append(msg_content["text"])
                 self._add_message(message)
 
@@ -716,12 +737,9 @@ class BedrockConverseAgent(Agent):
                         {
                             "role": "user",
                             "content": [
-                                cast(
-                                    "ContentBlockOutputTypeDef",
-                                    {
-                                        "toolResult": tool_result,
-                                    },
-                                )
+                                {
+                                    "toolResult": tool_result,
+                                }
                                 for tool_result in tool_results
                             ],
                         },
@@ -790,7 +808,7 @@ class BedrockConverseAgent(Agent):
         request: ConverseStreamRequestTypeDef = {
             "modelId": self.model_id,
             "inferenceConfig": self.default_inference_config,
-            "messages": cast(Sequence["MessageTypeDef"], list(self.messages)),
+            "messages": self.messages,
         }
         if self.default_guardrail_config:
             request["guardrailConfig"] = self.default_guardrail_config
@@ -829,28 +847,6 @@ class BedrockConverseAgent(Agent):
                 ],
             }
 
-        def update_content_blocks(
-            content_blocks: "list[ContentBlockDeltaTypeDef]",
-            content_block_delta: "ContentBlockDeltaEventTypeDef",
-        ):
-            content_block_index = content_block_delta["contentBlockIndex"]
-            delta = content_block_delta["delta"]
-            if len(content_blocks) < content_block_index + 1:
-                content_blocks.append(delta)
-            else:
-                content_block = content_blocks[content_block_index]
-                if "text" in delta:
-                    if "text" not in content_block:
-                        raise ValueError("Expected existing text content block")
-                    content_block["text"] += delta["text"]
-                elif "toolUse" in delta:
-                    if "toolUse" not in content_block:
-                        raise ValueError("Expected existing toolUse content block")
-                    content_block["toolUse"]["input"] = (
-                        content_block["toolUse"].get("input", "")
-                        + delta["toolUse"]["input"]
-                    )
-
         concatenated = ""
         texts: list[str] = [""]
         for _ in range(self.max_converse_iterations):
@@ -879,31 +875,58 @@ class BedrockConverseAgent(Agent):
                 metadata = None
                 stop_reason = None
 
-                message: MessageOutputTypeDef | None = None
                 content_blocks: list[ContentBlockOutputTypeDef] = []
+                message: MessageOutputTypeDef = {
+                    "role": "assistant",
+                    "content": content_blocks,
+                }
+                stream_events: dict[int, list[ConverseStreamOutputTypeDef]] = (
+                    defaultdict(list)
+                )
 
+                is_reasoning = False
                 for stream_event in response["stream"]:
-                    if "messageStart" in stream_event:
-                        message = {
-                            "role": stream_event["messageStart"]["role"],
-                            "content": content_blocks,
-                        }
-                    elif "contentBlockStart" in stream_event:
-                        content_block = stream_event["contentBlockStart"]["start"]
-                        content_blocks.append(
-                            cast("ContentBlockOutputTypeDef", content_block)
-                        )
+                    if "contentBlockStart" in stream_event:
+                        index = stream_event["contentBlockStart"]["contentBlockIndex"]
+                        stream_events[index].append(stream_event)
 
                     elif "contentBlockDelta" in stream_event:
-                        update_content_blocks(
-                            cast("list[ContentBlockDeltaTypeDef]", content_blocks),
-                            stream_event["contentBlockDelta"],
-                        )
+                        index = stream_event["contentBlockDelta"]["contentBlockIndex"]
+                        stream_events[index].append(stream_event)
+
                         text = stream_event["contentBlockDelta"]["delta"].get("text")
                         if text:
                             texts[-1] = text
                             yield text
                             concatenated += text
+
+                        if self.include_reasoning_text_within_thinking_tags:
+                            reasoning_content = stream_event["contentBlockDelta"][
+                                "delta"
+                            ].get("reasoningContent")
+                            if reasoning_content:
+                                reasoning_text = reasoning_content.get("text")
+                                if reasoning_text:
+                                    if not is_reasoning:
+                                        yield "<thinking>\n"
+                                        is_reasoning = True
+                                    texts[-1] = reasoning_text
+                                    yield reasoning_text
+                                    concatenated += reasoning_text
+                                reasoning_signature = reasoning_content.get("signature")
+                                if reasoning_signature:
+                                    if is_reasoning:
+                                        yield "\n</thinking>\n\n"
+                                        is_reasoning = False
+
+                    elif "contentBlockStop" in stream_event:
+                        index = stream_event["contentBlockStop"]["contentBlockIndex"]
+                        content_blocks.append(
+                            self.squash_stream_events(stream_events[index])
+                        )
+
+                    elif "messageStart" in stream_event:
+                        pass
 
                     elif "messageStop" in stream_event:
                         stop_reason = stream_event["messageStop"]["stopReason"]
@@ -914,27 +937,24 @@ class BedrockConverseAgent(Agent):
 
                     elif "metadata" in stream_event:
                         metadata = stream_event["metadata"]
+                    else:
+                        raise Exception(f"Unsupported stream event {stream_event}")
 
                 if not metadata:
                     raise ValueError("Incomplete response stream: missing metadata")
                 if not stop_reason:
                     raise ValueError("Incomplete response stream: missing stop_reason")
-                if message is None:
-                    message = {
-                        "role": "assistant",
-                        "content": [],
-                    }
 
                 trace.add_attribute("ai.llm.response.output", {"message": message})
                 trace.add_attribute("ai.llm.response.stop.reason", stop_reason)
                 trace.add_attribute("ai.llm.response.usage", metadata["usage"])
                 trace.add_attribute("ai.llm.response.metrics", metadata["metrics"])
-
-            for cb in content_blocks:
-                if "toolUse" in cb:
-                    tool_input = cb["toolUse"]["input"]
-                    cb["toolUse"]["input"] = (
-                        json.loads(cast(str, tool_input)) if tool_input else {}
+                if "trace" in metadata:
+                    trace.add_attribute("ai.llm.response.trace", metadata["trace"])
+                if "performanceConfig" in metadata:
+                    trace.add_attribute(
+                        "ai.llm.response.performance.config",
+                        metadata["performanceConfig"],
                     )
 
             self._add_message(message)
@@ -948,19 +968,14 @@ class BedrockConverseAgent(Agent):
                     {
                         "role": "user",
                         "content": [
-                            cast(
-                                "ContentBlockOutputTypeDef",
-                                {
-                                    "toolResult": tool_result,
-                                },
-                            )
+                            {
+                                "toolResult": tool_result,
+                            }
                             for tool_result in tool_results
                         ],
                     },
                 )
-                request["messages"] = cast(
-                    "Sequence[MessageTypeDef]", list(self.messages)
-                )
+                request["messages"] = self.messages
                 continue
 
             elif stop_reason == "end_turn":
@@ -970,3 +985,76 @@ class BedrockConverseAgent(Agent):
         else:
             raise Exception("Too many successive tool invocations")
         current_trace.add_attribute("ai.agent.response", concatenated)
+
+    @staticmethod
+    def squash_stream_events(
+        accumulated: "list[ConverseStreamOutputTypeDef]",
+    ):
+        current_block = {
+            "text": "",
+            "toolUse": {
+                "name": "",
+                "toolUseId": "",
+                "input": "",
+            },
+            "reasoningContent": {
+                "text": "",
+                "signature": "",
+                "redactedContent": "",
+            },
+        }
+        for cb in accumulated:
+            if "contentBlockStart" in cb:
+                tool_use = cb["contentBlockStart"]["start"].get("toolUse")
+                if tool_use:
+                    current_block["toolUse"]["name"] = tool_use["name"]
+                    current_block["toolUse"]["toolUseId"] = tool_use["toolUseId"]
+            elif "contentBlockDelta" in cb:
+                delta = cb["contentBlockDelta"]["delta"]
+                if "text" in delta:
+                    current_block["text"] += delta["text"]
+                elif "toolUse" in delta and "input" in delta["toolUse"]:
+                    current_block["toolUse"]["input"] = (
+                        current_block["toolUse"].get("input", "")
+                        + delta["toolUse"]["input"]
+                    )
+                elif "reasoningContent" in delta:
+                    if "text" in delta["reasoningContent"]:
+                        current_block["reasoningContent"]["text"] += delta[
+                            "reasoningContent"
+                        ]["text"]
+                    if "signature" in delta["reasoningContent"]:
+                        current_block["reasoningContent"]["signature"] = delta[
+                            "reasoningContent"
+                        ]["signature"]
+                    if "redactedContent" in delta["reasoningContent"]:
+                        current_block["reasoningContent"]["redactedContent"] = delta[
+                            "reasoningContent"
+                        ]["redactedContent"]
+
+        content_block: ContentBlockOutputTypeDef = {}
+        if current_block["toolUse"]["toolUseId"]:
+            content_block["toolUse"] = {
+                "name": current_block["toolUse"]["name"],
+                "toolUseId": current_block["toolUse"]["toolUseId"],
+                "input": (
+                    json.loads(current_block["toolUse"]["input"])
+                    if current_block["toolUse"].get("input")
+                    else {}
+                ),
+            }
+        if current_block["text"]:
+            content_block["text"] = current_block["text"]
+
+        if current_block["reasoningContent"]["text"]:
+            content_block["reasoningContent"] = {
+                "reasoningText": {
+                    "text": current_block["reasoningContent"]["text"],
+                    "signature": current_block["reasoningContent"]["signature"],
+                },
+            }
+            redacted_content = current_block["reasoningContent"].get("redactedContent")
+            if redacted_content:
+                content_block["reasoningContent"]["redactedContent"] = redacted_content
+
+        return content_block
