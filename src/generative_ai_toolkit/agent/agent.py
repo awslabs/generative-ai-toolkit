@@ -698,6 +698,39 @@ class BedrockConverseAgent(Agent):
                 trace.add_attribute(
                     "ai.llm.request.tool.config", request.get("toolConfig")
                 )
+                if "guardrailConfig" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.guardrail.config", request["guardrailConfig"]
+                    )
+
+                if "additionalModelRequestFields" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.additional.model.request.fields",
+                        request["additionalModelRequestFields"],
+                    )
+
+                if "additionalModelResponseFieldPaths" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.additional.model.response.field.paths",
+                        request["additionalModelResponseFieldPaths"],
+                    )
+
+                if "promptVariables" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.prompt.variables", request["promptVariables"]
+                    )
+
+                if "requestMetadata" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.request.metadata", request["requestMetadata"]
+                    )
+
+                if "performanceConfig" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.performance.config",
+                        request["performanceConfig"],
+                    )
+
                 try:
                     response = self.bedrock_client.converse(**request)
                     trace.add_attribute("ai.llm.response.output", response["output"])
@@ -757,13 +790,18 @@ class BedrockConverseAgent(Agent):
                     request["messages"] = list(self.messages)
                     continue
 
-                elif response["stopReason"] == "end_turn":
+                elif response["stopReason"] in (
+                    "end_turn",
+                    "max_tokens",
+                    "stop_sequence",
+                    "guardrail_intervened",
+                    "content_filtered",
+                ):
                     concatenated = "\n".join(texts)
                     texts = []
                     current_trace.add_attribute("ai.agent.response", concatenated)
                     return concatenated
 
-            raise Exception("Unexpected LLM response")
         raise Exception(
             "Too many successive tool invocations:{self.max_converse_iterations} "
         )
@@ -876,6 +914,39 @@ class BedrockConverseAgent(Agent):
                 trace.add_attribute(
                     "ai.llm.request.tool.config", request.get("toolConfig")
                 )
+                if "guardrailConfig" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.guardrail.config", request["guardrailConfig"]
+                    )
+
+                if "additionalModelRequestFields" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.additional.model.request.fields",
+                        request["additionalModelRequestFields"],
+                    )
+
+                if "additionalModelResponseFieldPaths" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.additional.model.response.field.paths",
+                        request["additionalModelResponseFieldPaths"],
+                    )
+
+                if "promptVariables" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.prompt.variables", request["promptVariables"]
+                    )
+
+                if "requestMetadata" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.request.metadata", request["requestMetadata"]
+                    )
+
+                if "performanceConfig" in request:
+                    trace.add_attribute(
+                        "ai.llm.request.performance.config",
+                        request["performanceConfig"],
+                    )
+
                 try:
                     response = self.bedrock_client.converse_stream(**request)
                 except botocore.exceptions.ClientError as err:
@@ -919,6 +990,7 @@ class BedrockConverseAgent(Agent):
                                 if reasoning_text:
                                     if not is_reasoning:
                                         yield "<thinking>\n"
+                                        concatenated += "<thinking>\n"
                                         is_reasoning = True
                                     texts[-1] = reasoning_text
                                     yield reasoning_text
@@ -927,6 +999,7 @@ class BedrockConverseAgent(Agent):
                                 if reasoning_signature:
                                     if is_reasoning:
                                         yield "\n</thinking>\n\n"
+                                        concatenated += "\n</thinking>\n\n"
                                         is_reasoning = False
 
                     elif "contentBlockStop" in stream_event:
@@ -988,10 +1061,15 @@ class BedrockConverseAgent(Agent):
                 request["messages"] = self.messages
                 continue
 
-            elif stop_reason == "end_turn":
+            elif stop_reason in (
+                "end_turn",
+                "max_tokens",
+                "stop_sequence",
+                "guardrail_intervened",
+                "content_filtered",
+            ):
                 break
 
-            raise Exception("Unexpected LLM response")
         else:
             raise Exception("Too many successive tool invocations")
         current_trace.add_attribute("ai.agent.response", concatenated)
