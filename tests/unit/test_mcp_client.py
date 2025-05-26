@@ -33,7 +33,7 @@ def test_mcp_client(mock_bedrock_converse):
                 "args": [
                     "mcp_server_get_weather.py",
                 ],
-                "command": "python3",
+                "command": "python",
                 "env": {
                     "WEATHER": "Sunny",
                     "FASTMCP_LOG_LEVEL": "ERROR",

@@ -15,6 +15,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from multi_agent import multi_agent
 from sample_agent_1 import sample_agent_1
 from sample_agent_2 import sample_agent_2
 
@@ -37,6 +38,11 @@ def mock_agent_1(mock_bedrock_converse):
 @pytest.fixture
 def mock_agent_2(mock_bedrock_converse):
     yield sample_agent_2(session=mock_bedrock_converse.session())
+
+
+@pytest.fixture
+def mock_multi_agent():
+    yield multi_agent()
 
 
 @pytest.fixture

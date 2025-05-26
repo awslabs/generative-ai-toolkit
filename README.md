@@ -63,7 +63,12 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 
 2.1 [Installation](#21-installation)  
 2.2 [Agent Implementation](#22-agent-implementation)  
-2.3 [Tracing](#23-tracing)  
+ 2.2.1 [Chat with agent](#221-chat-with-agent)  
+ 2.2.2 [Conversation history](#222-conversation-history)  
+ 2.2.3 [Reasoning and other Bedrock Converse Arguments](#223-bedrock-converse-arguments)  
+ 2.2.4 [Tools](#224-tools)  
+ 2.2.5 [Multi-agent support](#225-multi-agent-support)  
+ 2.2.6 [Tracing](#226-tracing)  
 2.4 [Evaluation Metrics](#24-evaluation-metrics)  
 2.5 [Repeatable Cases](#25-repeatable-cases)  
 2.6 [Cases with Dynamic Expectations](#26-cases-with-dynamic-expectations)  
@@ -109,7 +114,7 @@ agent = BedrockConverseAgent(
 
 Obviously right now this agent doesn't have any tools yet (we'll add some shortly), but you can already chat with it.
 
-#### Chat with agent
+#### 2.2.1 Chat with agent
 
 Use `converse()` to chat with the agent. You pass the user's input to this function, and it will return the agent's response as string:
 
@@ -118,7 +123,7 @@ response = agent.converse("What's the capital of France?")
 print(response) # "The capital of France is Paris."
 ```
 
-#### Response streaming
+##### Response streaming
 
 You can also use `converse_stream()` to chat with the agent. You pass the user's input to this function, and it will return an iterator that will progressively return the response fragments. You should concatenate these fragments to collect the full response.
 
@@ -138,7 +143,7 @@ The
  Paris.
 ```
 
-#### Conversation history
+#### 2.2.2 Conversation history
 
 The agent maintains the conversation history, so e.g. after the question just asked, this would now work:
 
@@ -149,7 +154,7 @@ print(response) # "Here are some of the major tourist highlights and attractions
 
 By default conversation history is stored in memory only. If you want to use conversation history across different process instantiations, you need conversation history that is persisted to durable storage.
 
-#### Persisting conversation history
+##### Persisting conversation history
 
 You can use the `DynamoDbConversationHistory` class to persist conversations to DynamoDB. Conversation history is maintained per conversation ID. The agent will create a new conversation ID automatically:
 
@@ -184,7 +189,7 @@ response = agent.converse("What are some touristic highlights there?")
 print(response) # "Here are some of the major tourist highlights and attractions in Paris, France:\n\n- Eiffel Tower - One of the most famous monuments ..."
 ```
 
-#### Viewing the conversation history
+##### Viewing the conversation history
 
 You can manually view the conversation history like so:
 
@@ -197,7 +202,7 @@ Conversation history is included automatically in the prompt to the LLM. That is
 
 This is generally how conversations with LLMs work––the LLM has no memory of the current conversation, you need to provide all past messages, including those from the LLM (the "assistant"), as part of your prompt to the LLM.
 
-#### Starting a fresh conversation
+##### Starting a fresh conversation
 
 Calling `agent.reset()` starts a new conversation, with empty conversation history:
 
@@ -210,7 +215,7 @@ print(len(agent.messages)) # 0
 print(agent.conversation_id)  # e.g.: "01J5DQRD864TR3BF314CZK8X5B" (changed)
 ```
 
-#### Bedrock Converse Arguments
+#### 2.2.3 Bedrock Converse Arguments
 
 Upon instantiating the `BedrockConverseAgent` you can pass any arguments that the Bedrock Converse API accepts, and these will be used for all invocations of the Converse API by the agent. You could for example specify usage of [Amazon Bedrock Guardrails](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html):
 
@@ -288,7 +293,7 @@ agent = BedrockConverseAgent(
 )
 ```
 
-#### Tools
+#### 2.2.4 Tools
 
 If you want to give the agent access to tools, you can define them as Python functions, and register them with the agent. Your Python function must have type annotations for input and output, and a docstring like so:
 
@@ -312,7 +317,7 @@ print(response) # Okay, let me get the current weather report for Amsterdam usin
 
 As you can see, tools that you've registered will be invoked automatically by the agent. The output from `converse` is always just a string with the agent's response to the user.
 
-#### Other tools
+##### Other tools
 
 If you don't want to register a Python function as tool, but have a tool with tool spec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
 
@@ -358,7 +363,7 @@ agent.register_tool(
 )
 ```
 
-#### Tools override
+##### Tools override
 
 It's possible to set and override the tool selection when calling converse:
 
@@ -380,7 +385,48 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
 
-### 2.3 Tracing
+#### 2.2.5 Multi-Agent Support
+
+Agents can themselves be used as tool too. This allows you to build hierarchical multi-agent systems, where a supervisor agent can use specialized subordinate agents to delegate tasks to.
+
+To use an agent as a tool, the agent must have a `name` and `description`:
+
+```python
+# Create a specialized weather agent:
+weather_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+    system_prompt="You provide the weather forecast for the specified city.",
+    name="transfer_to_weather_agent",  # will be used as the tool name when registered
+    description="Get the weather forecast for a city.",  # will be used as the tool description
+)
+
+# Add tools to the specialized agent:
+def get_weather(city: str):
+    """Gets the weather forecast for the provided city"""
+    return "Sunny"
+
+weather_agent.register_tool(get_weather)
+
+# Create a supervisor agent that uses the specialized agent:
+supervisor = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    system_prompt="You provide users with information about cities they want to visit.",
+)
+
+# Register the specialized agent as a tool with the supervisor:
+supervisor.register_tool(weather_agent)
+
+# The supervisor will delegate to the specialized agent:
+response = supervisor.converse("What's the weather like in Amsterdam?")
+```
+
+Notes:
+
+- More layers of nesting can be added if desired; a subordinate agent can itself be supervisor to its own set of subordinate agents, etc.
+- Each agent maintains its own set of traces that can be inspected independently, making it easy to debug and understand the flow of information through your multi-agent system.
+- The above example is obviously contrived; for a more comprehensive example with multiple specialized agents working together, see [multi_agent.ipynb](/examples/multi_agent.ipynb).
+
+#### 2.2.6 Tracing
 
 You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class.
 
@@ -413,13 +459,13 @@ Trace(span_name='converse', span_kind='SERVER', trace_id='33185be48ee341d16bf681
 
 That is the root trace of the conversation, that captures user input and agent response. Other traces capture details such as LLM invocations, Tool invocations, usage of conversation history, etc.
 
-#### Available tracers
+##### Available tracers
 
 The Generative AI Toolkit includes several tracers out-of-the-box, e.g. the `DynamoDBTracer` that saves traces to DynamoDB, and the `OtlpTracer` that sends traces to an OpenTelemetry collector (e.g. to forward them to AWS X-Ray).
 
 For a full run-down of all out-of-the-box tracers and how to use them, view [examples/tracing101.ipynb](examples/tracing101.ipynb).
 
-#### Open Telemetry
+##### Open Telemetry
 
 Traces use the [OpenTelemetry "Span" model](https://opentelemetry.io/docs/specs/otel/trace/api/#span). That model works at high level by assigning a unique Trace ID to each incoming request (e.g. over HTTP). All actions that are taken while executing that request, are recorded as "span" and will have a unique Span ID. Span name, start timestamp, end timestamp, are recorded at span level.
 
@@ -463,7 +509,7 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 | `ai.agent.response`                                    | The final concatenated response from the agent                                                                                                                                                    |
 | `service.name`                                         | Name of the service, set to the class name of the agent                                                                                                                                           |
 
-#### Viewing traces
+##### Viewing traces
 
 ```python
 for trace in agent.traces:
@@ -538,7 +584,7 @@ Which would print e.g.:
 
 ```
 
-#### Web UI
+##### Web UI
 
 You can view the traces for a conversation using the Generative AI Toolkit Web UI:
 
@@ -560,7 +606,7 @@ Stop the Web UI as follows:
 demo.close()
 ```
 
-#### DynamoDB example
+##### DynamoDB example
 
 As example, here's some traces that were stored with the `DynamoDBTracer`:
 
@@ -568,7 +614,7 @@ As example, here's some traces that were stored with the `DynamoDBTracer`:
 
 In production deployments, you'll likely want to use the `DynamoDBTracer`, so you can listen to the DynamoDB stream as traces are recorded, and run metric evaluations against them (see next section). This way, you can monitor the performance of your agent in production.
 
-#### AWS X-Ray example
+##### AWS X-Ray example
 
 Here's a more elaborate example of a set traces when viewed in AWS X-Ray (you would have used the `OtlpTracer` to send them there):
 

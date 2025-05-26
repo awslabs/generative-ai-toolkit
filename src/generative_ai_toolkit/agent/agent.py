@@ -25,6 +25,7 @@ from typing import (
     Literal,
     Protocol,
     Unpack,
+    runtime_checkable,
 )
 
 import boto3
@@ -64,7 +65,7 @@ if TYPE_CHECKING:
     )
 
 
-class Agent(Protocol):
+class Agent(Tool, Protocol):
     @property
     def model_id(self) -> str:
         """
@@ -201,6 +202,19 @@ class Agent(Protocol):
         """
         ...
 
+    def invoke(self, *args, **kwargs) -> Any:
+        """
+        Invoke the agent as tool. This method is used, when the agent is registered as tool with another agent.
+        """
+        ...
+
+    @property
+    def tool_spec(self) -> "ToolSpecificationTypeDef":
+        """
+        The tool specification of the agent, that allows it to be registered as tool with another agent.
+        """
+        ...
+
 
 class BedrockConverseAgent(Agent):
     _model_id: str
@@ -241,6 +255,9 @@ class BedrockConverseAgent(Agent):
         executor: Executor | None = None,
         tool_result_json_encoder: type[json.JSONEncoder] | None = None,
         include_reasoning_text_within_thinking_tags=True,
+        name: str | None = None,
+        description: str | None = None,
+        input_schema: dict[str, Any] | None = None,
     ) -> None:
         """
         Create an Agent that will use the Bedrock Converse API to operate.
@@ -293,6 +310,12 @@ class BedrockConverseAgent(Agent):
             Custom JSON Encoder to encode tool results with, prior to sending them to the LLM
         include_reasoning_text_within_thinking_tags : bool
             Should reasoning texts be included (within <thinking> tags) in the output of converse and converse_stream? (Default: True)
+        name : str | None, optional
+            Name of the agent when used as a tool
+        description : str | None, optional
+            Description of the agent when used as a tool
+        input_schema : dict[str, Any] | None, optional
+            JSON schema for the input when the agent is used as a tool. If not provided, the agent is assumed to take its input as as single string.
         """
         self._system_prompt = system_prompt
         self._model_id = model_id
@@ -379,6 +402,14 @@ class BedrockConverseAgent(Agent):
         self.include_reasoning_text_within_thinking_tags = (
             include_reasoning_text_within_thinking_tags
         )
+        self.name = name
+        "Name of the agent when used as a tool"
+
+        self.description = description
+        "Description of the agent when used as a tool"
+
+        self.input_schema = input_schema
+        "JSON schema (override) for the input when the agent is used as a tool"
 
     @classmethod
     def _prune_instances_used(cls):
@@ -562,6 +593,10 @@ class BedrockConverseAgent(Agent):
                 tool = tools.get(tool_name)
                 if not tool:
                     raise ValueError(f"Unknown tool: {tool_name}")
+                if isinstance(tool, AgentAsTool):
+                    tool.set_auth_context(self.auth_context)
+                    tool.set_conversation_id(self.conversation_id)
+                    tool.set_trace_context(span=self.tracer.current_trace)
                 tool_response = tool.invoke(**tool_use["input"])
                 trace.add_attribute("ai.tool.output", tool_response)
                 if not isinstance(tool_response, dict):
@@ -1013,8 +1048,6 @@ class BedrockConverseAgent(Agent):
 
                     elif "messageStop" in stream_event:
                         stop_reason = stream_event["messageStop"]["stopReason"]
-                        if texts[-1]:
-                            texts.append("")
                         yield "\n"
                         concatenated += "\n"
 
@@ -1146,3 +1179,67 @@ class BedrockConverseAgent(Agent):
                 content_block["reasoningContent"]["redactedContent"] = redacted_content
 
         return content_block
+
+    def invoke(self, *args, **kwargs) -> Any:
+        if not self.input_schema:
+            user_input = kwargs.pop("user_input")
+        else:
+            params = {}
+            for param_name in self.input_schema["properties"]:
+                if param_name in kwargs:
+                    param_value = kwargs.pop(param_name)
+                    params[param_name] = param_value
+            user_input = f"Your input is:\n\n{json.dumps(params)}"
+        return self.converse(*args, **kwargs, user_input=user_input)
+
+    @property
+    def tool_spec(self) -> "ToolSpecificationTypeDef":
+        if not self.name:
+            raise RuntimeError(
+                "Missing name. When using an agent as tool, the agent must be instantiated with a name"
+            )
+
+        if not self.description:
+            raise RuntimeError(
+                "Missing description. When using an agent as tool, the agent must be instantiated with a description"
+            )
+        return {
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": {
+                "json": self.input_schema
+                or {
+                    "type": "object",
+                    "properties": {
+                        "user_input": {
+                            "type": "string",
+                            "description": "The input to the agent",
+                        },
+                    },
+                    "required": ["user_input"],
+                }
+            },
+        }
+
+
+@runtime_checkable
+class AgentAsTool(Protocol):
+    def set_trace_context(
+        self, **update: Unpack[TraceContextUpdate]
+    ) -> Callable[[], None]:
+        """
+        Set the trace context of the agent
+        """
+        ...
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        """
+        Set the conversation id of the agent.
+        """
+        ...
+
+    def set_auth_context(self, auth_context: str | None) -> None:
+        """
+        Set the auth context of the agent.
+        """
+        ...

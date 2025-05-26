@@ -54,7 +54,6 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
     ):
         traces_for_trace_id = list(traces_for_trace_id_iter)
         root_trace = traces_for_trace_id[0]
-        assert root_trace.parent_span is None
         summary = TraceSummary(
             conversation_id=root_trace.attributes["ai.conversation.id"],
             auth_context=root_trace.attributes.get("ai.auth.context"),
@@ -97,36 +96,36 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     tool_output = attributes.pop("ai.tool.output", None)
     tool_error = attributes.pop("ai.tool.error", None)
     res = textwrap.dedent(
-        f"""
+        """
         **Input**
         {tool_input}
         """
-    )
+    ).format(tool_input=tool_input)
     if tool_output:
         res += textwrap.dedent(
-            f"""
+            """
             **Output**
             {tool_output}
             """
-        )
+        ).format(tool_output=tool_output)
     if tool_error:
         res += textwrap.dedent(
-            f"""
+            """
             **Error**
             {tool_error}
             """
-        )
+        ).format(tool_error=tool_error)
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
     )
     if rest_attributes:
         res += textwrap.dedent(
-            f"""
-            **Attributes**
-            {json.dumps(rest_attributes)}
             """
-        )
+            **Attributes**
+            {rest_attributes_json}
+            """
+        ).format(rest_attributes_json=json.dumps(rest_attributes))
     return html.escape(res)
 
 
@@ -139,7 +138,7 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
     inference_config = attributes.pop("ai.llm.request.inference.config", None)
     output = attributes.pop("ai.llm.response.output", None)
     res = textwrap.dedent(
-        f"""
+        """
         **Inference Config**
         {inference_config}
 
@@ -155,13 +154,19 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
         **Messages**
         {messages}
         """
+    ).format(
+        inference_config=inference_config,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        tool_config=tool_config,
+        messages=messages,
     )
     if output:
         stop_reason = attributes.pop("ai.llm.response.stop.reason", None)
         usage = attributes.pop("ai.llm.response.usage", None)
         metrics = attributes.pop("ai.llm.response.metrics", None)
         res += textwrap.dedent(
-            f"""
+            """
             **Output**
             {output}
 
@@ -174,15 +179,22 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             **Metrics**
             {metrics}
             """
+        ).format(
+            output=output,
+            stop_reason=stop_reason,
+            usage=usage,
+            metrics=metrics,
         )
 
     error = attributes.pop("ai.llm.response.error", None)
     if error:
         res += textwrap.dedent(
-            f"""
+            """
             **Error**
             {error}
             """
+        ).format(
+            error=error,
         )
     rest_attributes = without(
         attributes,
@@ -190,11 +202,11 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
     )
     if rest_attributes:
         res += textwrap.dedent(
-            f"""
-            **Attributes**
-            {json.dumps(rest_attributes)}
             """
-        )
+            **Attributes**
+            {rest_attributes_json}
+            """
+        ).format(rest_attributes_json=json.dumps(rest_attributes))
     return html.escape(res)
 
 
@@ -204,41 +216,58 @@ def without(d: Mapping, keys: Sequence[str]):
 
 def get_markdown_generic(trace: Trace):
     res = textwrap.dedent(
-        f"""
+        """
         **Trace type**
-        {trace.attributes.get("ai.trace.type")}
+        {ai_trace_type}
 
         **Span kind**
-        {trace.span_kind}
+        {trace_span_kind}
 
         **Attributes**
-        {json.dumps(without(trace.attributes, ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"]))}
+        {trace_attributes}
         """
+    ).format(
+        ai_trace_type=trace.attributes.get("ai.trace.type"),
+        trace_span_kind=trace.span_kind,
+        trace_attributes=json.dumps(
+            without(
+                trace.attributes,
+                [
+                    "ai.conversation.id",
+                    "ai.trace.type",
+                    "ai.auth.context",
+                    "peer.service",
+                ],
+            )
+        ),
     )
     return html.escape(res)
 
 
 def get_markdown_for_measurement(measurement: Measurement):
     res = textwrap.dedent(
-        f"""
-        **{measurement.name}**
-        {measurement.value}{f" ({measurement.unit})" if measurement.unit is not Unit.None_ else ""}
         """
+        **{measurement_name}**
+        {measurement_value}
+        """
+    ).format(
+        measurement_name=measurement.name,
+        measurement_value=f"{measurement.value}{f" ({measurement.unit})" if measurement.unit is not Unit.None_ else ""}",
     )
     if measurement.additional_info:
         res += textwrap.dedent(
-            f"""
-            **Additional Info**
-            {json.dumps(measurement.additional_info)}
             """
-        )
+            **Additional Info**
+            {additional_info}
+            """
+        ).format(additional_info=json.dumps(measurement.additional_info))
     if measurement.dimensions:
         res += textwrap.dedent(
-            f"""
-            **Dimensions**
-            {json.dumps(measurement.dimensions)}
             """
-        )
+            **Dimensions**
+            {dimensions}
+            """
+        ).format(dimensions=json.dumps(measurement.dimensions))
 
     return html.escape(res)
 

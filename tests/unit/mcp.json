@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "WeatherForecasts": {
-      "command": "python3",
+      "command": "python",
       "args": ["mcp_server_get_weather.py"],
       "env": {
         "WEATHER": "Sunny",
