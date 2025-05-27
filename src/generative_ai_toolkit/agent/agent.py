@@ -204,14 +204,14 @@ class Agent(Tool, Protocol):
 
     def invoke(self, *args, **kwargs) -> Any:
         """
-        Invoke the agent as tool. This method is used, when the agent is registered as tool with another agent.
+        Invoke the agent as tool. This method is used, when the agent is registered as a tool with another agent.
         """
         ...
 
     @property
     def tool_spec(self) -> "ToolSpecificationTypeDef":
         """
-        The tool specification of the agent, that allows it to be registered as tool with another agent.
+        The tool specification of the agent, that allows it to be registered as a tool with another agent.
         """
         ...
 
