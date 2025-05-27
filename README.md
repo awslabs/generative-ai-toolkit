@@ -426,6 +426,56 @@ Notes:
 - Each agent maintains its own set of traces that can be inspected independently, making it easy to debug and understand the flow of information through your multi-agent system.
 - The above example is obviously contrived; for a more comprehensive example with multiple specialized agents working together, see [multi_agent.ipynb](/examples/multi_agent.ipynb).
 
+##### Input schema
+
+By default, when an agent is used as tool (i.e. as subordinate agent by a supervisor agent), its input schema is:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "user_input": {
+      "type": "string",
+      "description": "The input to the agent"
+    }
+  },
+  "required": ["user_input"]
+}
+```
+
+Note: the above schema matches the `converse()` method of the `BedrockConverseAgent`, as that will be used under the hood.
+
+If you want to make sure the agent is called with particular inputs, you can provide an input schema explicitly:
+
+```python
+weather_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+    system_prompt="You provide the weather forecast for the specified city.",
+    name="transfer_to_weather_agent",  # will be used as the tool name when registered
+    description="Get the weather forecast for a city.",  # will be used as the tool description
+    input_schema={
+        "type": "object",
+        "properties": {
+            "user_input": {
+                "type": "string",
+                "description": "The city to get the weather for"
+            }
+        },
+        "required": ["city"]
+    }
+)
+```
+
+Then, when the supervisor invokes the subordinate agent, the supervisor will call the subordinate agent's `converse()` method with `user_input` that includes a (stringified) JSON object, according to the input schema:
+
+```
+Your input is:
+
+{"city": "Amsterdam"}
+```
+
+So, the `user_input` to the agent will always be a Python `str`, but using an `input_schema` allows you to 'nudge' the LLM (of the supervisor agent) to include the requested fields explicitly. Alternatively, you could express which fields you require in the subordinate agent's description. Both approaches can work––you'll have to see what works best for your case.
+
 #### 2.2.6 Tracing
 
 You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class.
