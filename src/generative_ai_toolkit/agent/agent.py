@@ -253,7 +253,7 @@ class BedrockConverseAgent(Agent):
         session: boto3.session.Session | None = None,
         bedrock_client: "BedrockRuntimeClient | None" = None,
         tools: Sequence[Callable] | None = None,
-        max_successive_tool_invocations: int = 10,
+        max_successive_tool_invocations: int = 30,
         executor: Executor | None = None,
         tool_result_json_encoder: type[json.JSONEncoder] | None = None,
         include_reasoning_text_within_thinking_tags=True,
@@ -307,7 +307,7 @@ class BedrockConverseAgent(Agent):
         tools : Sequence[Callable] | None, optional
             Tools available to the agent
         max_successive_tool_invocations : int, optional
-            Maximum number of consecutive tool calls, by default 10
+            Maximum number of consecutive tool calls, by default 30
         executor : Executor | None, optional
             Executor for parallelizing tool invocations. By default, a ThreadPoolExecutor with 8 workers is used.
         tool_result_json_encoder : type[json.JSONEncoder], optional
