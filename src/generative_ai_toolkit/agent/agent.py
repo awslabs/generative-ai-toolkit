@@ -31,6 +31,7 @@ from typing import (
 import boto3
 import boto3.session
 import botocore.exceptions
+from botocore.config import Config
 
 from generative_ai_toolkit.agent.tool import (
     BedrockConverseTool,
@@ -250,6 +251,7 @@ class BedrockConverseAgent(Agent):
         performance_config: "PerformanceConfigurationTypeDef | None" = None,
         tracer: Tracer | Callable[..., Tracer] | None = None,
         session: boto3.session.Session | None = None,
+        bedrock_client: "BedrockRuntimeClient | None" = None,
         tools: Sequence[Callable] | None = None,
         max_successive_tool_invocations: int = 10,
         executor: Executor | None = None,
@@ -300,6 +302,8 @@ class BedrockConverseAgent(Agent):
             Tracer for monitoring agent behavior, by default InMemoryTracer
         session : boto3.session.Session | None, optional
             AWS session for Bedrock API calls, by default None (use default session)
+        bedrock_client : BedrockRuntimeClient | None, optional
+            Boto3 client for "bedrock-runtime", by default None (use provided session to create a client)
         tools : Sequence[Callable] | None, optional
             Tools available to the agent
         max_successive_tool_invocations : int, optional
@@ -320,8 +324,14 @@ class BedrockConverseAgent(Agent):
         self._system_prompt = system_prompt
         self._model_id = model_id
         self._tools = {}
-        self.bedrock_client: BedrockRuntimeClient = (session or boto3).client(
-            "bedrock-runtime"
+        self.bedrock_client: BedrockRuntimeClient = bedrock_client or (
+            session or boto3
+        ).client(
+            "bedrock-runtime",
+            config=Config(
+                read_timeout=120,  # Default is 60, which can be a tad short for LLM responses
+                tcp_keepalive=True,
+            ),
         )
         if not conversation_history:
             self._conversation_history = InMemoryConversationHistory()
