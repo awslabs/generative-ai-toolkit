@@ -48,7 +48,7 @@ class TraceContextProvider(Protocol):
     ) -> Callable[[], None]: ...
 
 
-class ContextVarTraceContextProvider:
+class ContextVarTraceContextProvider(TraceContextProvider):
     def __init__(self) -> None:
         self._context = ContextVar[TraceContext | None]("trace_context", default=None)
 
@@ -59,6 +59,20 @@ class ContextVarTraceContextProvider:
             trace_context = TraceContext()
             self._context.set(trace_context)
         return trace_context
+
+    # def set_context(self, **update: Unpack[TraceContextUpdate]) -> Callable[[], None]:
+    #     old_context = self.context
+    #     new_context = TraceContext(
+    #         span=update["span"] if "span" in update else old_context.span,
+    #         scope=update["scope"] if "scope" in update else old_context.scope,
+    #         resource_attributes=(
+    #             update["resource_attributes"]
+    #             if "resource_attributes" in update
+    #             else old_context.resource_attributes
+    #         ),
+    #     )
+    #     token = self._context.set(new_context)
+    #     return lambda: self._context.reset(token)
 
     def set_context(self, **update: Unpack[TraceContextUpdate]) -> Callable[[], None]:
         old_context = self.context
@@ -71,5 +85,14 @@ class ContextVarTraceContextProvider:
                 else old_context.resource_attributes
             ),
         )
-        token = self._context.set(new_context)
-        return lambda: self._context.reset(token)
+
+        # Try to set using token, but don't rely on token for reset
+        self._context.set(new_context)
+
+        # Define a direct reset function instead of using token.reset()
+        def direct_reset():
+            # Simply set back to the old context directly
+            # This works across context boundaries because it doesn't rely on tokens
+            self._context.set(old_context)
+
+        return direct_reset

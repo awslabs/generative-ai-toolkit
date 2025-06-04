@@ -25,9 +25,44 @@ from itertools import groupby
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
 
+from generative_ai_toolkit.agent import Agent
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
+
+
+def chat_ui(agent: Agent, conversation_id: str = ""):
+
+    def conversation_history():
+        return [
+            {"role": msg["role"], "content": msg["content"][0].get("text", "-")}
+            for msg in agent.messages
+        ]
+
+    def chat(message, history):
+        collected = ""
+        for chunk in agent.converse_stream(message):
+            collected += chunk
+            yield collected
+
+    with gr.Blocks() as demo:
+        chatbot = gr.Chatbot(
+            type="messages",
+            height="80vh",
+            value=conversation_history,
+        )
+
+        chatbot.clear(lambda: agent.reset())
+
+        gr.ChatInterface(
+            chat,
+            chatbot=chatbot,
+            type="messages",
+            theme="default",
+            fill_height=True,
+        )
+
+        return demo
 
 
 @dataclass
