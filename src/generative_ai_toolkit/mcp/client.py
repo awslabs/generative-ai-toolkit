@@ -209,6 +209,8 @@ class McpClient:
                 if not paths:
                     # Using default locations
                     continue
+            except json.decoder.JSONDecodeError as err:
+                raise RuntimeError(f"Failed to parse {path}: {err}") from err
             else:
                 break
         else:

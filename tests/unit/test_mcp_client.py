@@ -14,6 +14,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from generative_ai_toolkit.agent import Agent, BedrockConverseAgent
 from generative_ai_toolkit.mcp.client import McpClient
 from generative_ai_toolkit.test import Expect
@@ -52,3 +54,11 @@ def test_mcp_client(mock_bedrock_converse):
 
     Expect(agent.traces).tool_invocations.to_include("current_weather")
     Expect(agent.traces).agent_text_response.to_equal("Sunny")
+
+
+def test_invalid_json(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+    with pytest.raises(RuntimeError, match="invalid.json"):
+        McpClient(agent, client_config_path=str(HERE / "invalid.json"))
