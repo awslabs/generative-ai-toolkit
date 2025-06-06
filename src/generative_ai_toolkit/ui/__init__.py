@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import datetime
 import functools
 import html
@@ -428,6 +429,8 @@ def traces_ui(
         traces,
     )
 
+    ensure_running_event_loop()
+
     with gr.Blocks(fill_width=True, title="Generative AI Toolkit") as demo:
         with gr.Row():
             gr.Markdown(
@@ -519,6 +522,8 @@ def measurements_ui(
         border-radius: 20px;
     }
     """
+
+    ensure_running_event_loop()
 
     with gr.Blocks(css=css, fill_width=True, title="Generative AI Toolkit") as demo:
         with gr.Column(
@@ -794,3 +799,14 @@ def measurements_ui(
         back_button.click(fn=go_back, inputs=[], outputs=[parent_page, child_page])
 
     return demo
+
+
+def ensure_running_event_loop():
+    """
+    Work-around for https://github.com/gradio-app/gradio/issues/11280
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
