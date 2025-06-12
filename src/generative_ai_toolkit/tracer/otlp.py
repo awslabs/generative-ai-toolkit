@@ -190,21 +190,22 @@ class OtlpTracer(BaseTracer):
         self._send_protobuf(OtlpBatch([trace]).protobuf().SerializeToString())
 
     def _send_protobuf(self, body: bytes):
-        self.conn.request(
-            "POST",
-            "/v1/traces",
-            body=body,
-            headers={
-                "Content-Type": "application/x-protobuf",
-            },
-        )
-        response = self.conn.getresponse()
-
-        # Must read response, in order to be able to re-use connection
-        # Also, nice for potential error message
-        response_body = response.read()
-
-        if response.status != 200:
-            raise ValueError(
-                f"Failed to send batch: {response.status} {response.reason} {response_body.decode()}"
+        with self.lock:
+            self.conn.request(
+                "POST",
+                "/v1/traces",
+                body=body,
+                headers={
+                    "Content-Type": "application/x-protobuf",
+                },
             )
+            response = self.conn.getresponse()
+
+            # Must read response, in order to be able to re-use connection
+            # Also, nice for potential error message
+            response_body = response.read()
+
+            if response.status != 200:
+                raise ValueError(
+                    f"Failed to send batch: {response.status} {response.reason} {response_body.decode()}"
+                )

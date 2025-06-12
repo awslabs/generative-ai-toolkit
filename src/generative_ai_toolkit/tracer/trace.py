@@ -16,7 +16,7 @@ import copy
 import json
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import (
     Any,
@@ -63,6 +63,7 @@ class Trace:
         span_status: Literal["UNSET", "OK", "ERROR"] = "UNSET",
         resource_attributes: Mapping[str, Any] | None = None,
         scope: "TraceScope | None" = None,
+        share_preview: Callable[["Trace"], None] | None = None,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
@@ -88,6 +89,11 @@ class Trace:
             else TraceScope("generative-ai-toolkit", "current")
         )
         self.span_status = span_status
+        self._share_preview = share_preview
+
+    def share_preview(self):
+        if self._share_preview:
+            self._share_preview(self)
 
     @property
     def attributes(self) -> Mapping[str, Any]:

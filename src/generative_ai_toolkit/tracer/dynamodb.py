@@ -48,91 +48,93 @@ class DynamoDbTracer(BaseTracer):
         self.conversation_id_gsi_name = conversation_id_gsi_name
 
     def persist(self, trace: Trace):
-        item = {
-            "pk": f"TRACE#{trace.trace_id}",
-            "sk": f"SPAN#{self.identifier or "_"}#{int(trace.started_at.timestamp() * 1_000_000):017x}#{trace.span_id}",
-            "trace_id": trace.trace_id,
-            "span_id": trace.span_id,
-            "span_kind": trace.span_kind,
-            "span_name": trace.span_name,
-            "scope_name": trace.scope.name,
-            "scope_version": trace.scope.version,
-            "resource_attributes": trace.resource_attributes,
-            "parent_span_id": (
-                trace.parent_span.span_id if trace.parent_span else None
-            ),
-            "started_at": trace.started_at,
-            "ended_at": trace.ended_at,
-            "duration_ms": trace.duration_ms,
-            "attributes": trace.attributes,
-            "identifier": self.identifier,
-        }
-        if self.ttl is not None:
-            item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
+        with self.lock:
+            item = {
+                "pk": f"TRACE#{trace.trace_id}",
+                "sk": f"SPAN#{self.identifier or "_"}#{int(trace.started_at.timestamp() * 1_000_000):017x}#{trace.span_id}",
+                "trace_id": trace.trace_id,
+                "span_id": trace.span_id,
+                "span_kind": trace.span_kind,
+                "span_name": trace.span_name,
+                "scope_name": trace.scope.name,
+                "scope_version": trace.scope.version,
+                "resource_attributes": trace.resource_attributes,
+                "parent_span_id": (
+                    trace.parent_span.span_id if trace.parent_span else None
+                ),
+                "started_at": trace.started_at,
+                "ended_at": trace.ended_at,
+                "duration_ms": trace.duration_ms,
+                "attributes": trace.attributes,
+                "identifier": self.identifier,
+            }
+            if self.ttl is not None:
+                item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
 
-        # Maintain as top level attributes for querying with GSI:
-        if "ai.conversation.id" in trace.attributes:
-            item["conversation_id"] = trace.attributes["ai.conversation.id"]
-        if "ai.auth.context" in trace.attributes:
-            item["auth_context"] = trace.attributes["ai.auth.context"]
+            # Maintain as top level attributes for querying with GSI:
+            if "ai.conversation.id" in trace.attributes:
+                item["conversation_id"] = trace.attributes["ai.conversation.id"]
+            if "ai.auth.context" in trace.attributes:
+                item["auth_context"] = trace.attributes["ai.auth.context"]
 
-        try:
-            self.table.put_item(
-                Item=DynamoDbMapper.to_dynamo(item),
-                ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            )
-        except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-            raise ValueError(f"Table {self.table.name} does not exist") from e
-        except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
-            raise ValueError(f"Trace {trace.trace_id} already exists") from e
-
-    def get_traces(self, trace_id: str | None = None, attribute_filter=None):
-        params = {}
-        if trace_id:
-            params["KeyConditionExpression"] = Key("pk").eq(f"TRACE#{trace_id}") & Key(
-                "sk"
-            ).begins_with(f"SPAN#{self.identifier or "_"}#")
-        elif attribute_filter and "ai.conversation.id" in attribute_filter:
-            params["KeyConditionExpression"] = Key("conversation_id").eq(
-                attribute_filter["ai.conversation.id"]
-            ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
-            params["IndexName"] = self.conversation_id_gsi_name
-            if "ai.auth.context" in attribute_filter:
-                params["FilterExpression"] = Attr("auth_context").eq(
-                    attribute_filter["ai.auth.context"]
-                )
-        else:
-            raise ValueError(
-                "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
-            )
-
-        items = []
-        last_evaluated_key: dict[str, Any] = {}
-        while True:
             try:
-                response = self.table.query(
-                    ScanIndexForward=True,
-                    **params,
-                    **last_evaluated_key,
+                self.table.put_item(
+                    Item=DynamoDbMapper.to_dynamo(item),
+                    ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
                 )
-
             except self.table.meta.client.exceptions.ResourceNotFoundException as e:
                 raise ValueError(f"Table {self.table.name} does not exist") from e
-            items.extend(response["Items"])
-            if "LastEvaluatedKey" not in response:
-                break
-            last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
+            except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
+                raise ValueError(f"Trace {trace.trace_id} already exists") from e
 
-        auth_contexts = {
-            item["auth_context"] for item in items if "auth_context" in item
-        }
-        if len(auth_contexts) > 1:
-            raise ValueError(f"Multiple auth contexts encountered: {auth_contexts}")
+    def get_traces(self, trace_id: str | None = None, attribute_filter=None):
+        with self.lock:
+            params = {}
+            if trace_id:
+                params["KeyConditionExpression"] = Key("pk").eq(f"TRACE#{trace_id}") & Key(
+                    "sk"
+                ).begins_with(f"SPAN#{self.identifier or "_"}#")
+            elif attribute_filter and "ai.conversation.id" in attribute_filter:
+                params["KeyConditionExpression"] = Key("conversation_id").eq(
+                    attribute_filter["ai.conversation.id"]
+                ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
+                params["IndexName"] = self.conversation_id_gsi_name
+                if "ai.auth.context" in attribute_filter:
+                    params["FilterExpression"] = Attr("auth_context").eq(
+                        attribute_filter["ai.auth.context"]
+                    )
+            else:
+                raise ValueError(
+                    "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
+                )
 
-        traces: dict[str, Trace] = {}
-        for item in response["Items"]:
-            trace = self.item_to_trace(item, traces)
-            traces[trace.span_id] = trace
+            items = []
+            last_evaluated_key: dict[str, Any] = {}
+            while True:
+                try:
+                    response = self.table.query(
+                        ScanIndexForward=True,
+                        **params,
+                        **last_evaluated_key,
+                    )
+
+                except self.table.meta.client.exceptions.ResourceNotFoundException as e:
+                    raise ValueError(f"Table {self.table.name} does not exist") from e
+                items.extend(response["Items"])
+                if "LastEvaluatedKey" not in response:
+                    break
+                last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
+
+            auth_contexts = {
+                item["auth_context"] for item in items if "auth_context" in item
+            }
+            if len(auth_contexts) > 1:
+                raise ValueError(f"Multiple auth contexts encountered: {auth_contexts}")
+
+            traces: dict[str, Trace] = {}
+            for item in response["Items"]:
+                trace = self.item_to_trace(item, traces)
+                traces[trace.span_id] = trace
 
         return sorted(traces.values(), key=lambda t: t.started_at)
 

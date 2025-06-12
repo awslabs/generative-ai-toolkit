@@ -29,38 +29,55 @@ from generative_ai_toolkit.agent import Agent
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
+from generative_ai_toolkit.utils.trace_stream import converse_stream_with_traces
 
 
-def chat_ui(agent: Agent, conversation_id: str = ""):
+def chat_ui(agent: Agent):
 
     def conversation_history():
         return [
-            {"role": msg["role"], "content": msg["content"][0].get("text", "-")}
+            gr.ChatMessage(role=msg["role"], content=msg["content"][0].get("text", "-"))
             for msg in agent.messages
         ]
 
-    def chat(message, history):
-        collected = ""
-        for chunk in agent.converse_stream(message):
-            collected += chunk
-            yield collected
+    def user_submit(user_message, history):
+        history = history or []
+        history.append({"role": "user", "content": user_message})
+        return (
+            gr.update(value="", interactive=False, submit_btn=False, stop_btn=True),
+            history,
+        )  # clear textbox, update chatbot
 
-    with gr.Blocks() as demo:
-        chatbot = gr.Chatbot(
-            type="messages",
-            height="80vh",
-            value=conversation_history,
+    def assistant_stream(history):
+        user_input = history[-1]["content"]
+        history.append({"role": "assistant", "content": ""})
+        traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
+        for trace in converse_stream_with_traces(agent, user_input):
+            traces[trace.span_id] = trace
+            conversation_id, auth_context, messages = chat_messages_from_traces(
+                traces.values()
+            )
+            yield messages
+
+    with gr.Blocks(theme="origin") as demo:
+        chatbot = gr.Chatbot(type="messages", height="80vh")
+        msg = gr.Textbox(
+            placeholder="Type your message ...",
+            submit_btn=True,
+            autofocus=True,
+            show_label=False,
+        )
+        msg.submit(user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
+            assistant_stream, chatbot, chatbot
+        ).then(
+            lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
+            None,
+            [msg],
         )
 
-        chatbot.clear(lambda: agent.reset())
+        chatbot.clear(agent.reset, queue=False)
 
-        gr.ChatInterface(
-            chat,
-            chatbot=chatbot,
-            type="messages",
-            theme="default",
-            fill_height=True,
-        )
+        demo.load(conversation_history, None, [chatbot])
 
         return demo
 
@@ -70,7 +87,7 @@ class TraceSummary:
     trace_id: str
     span_id: str
     started_at: datetime.datetime
-    duration_ms: int
+    duration_ms: int | None
     conversation_id: str
     auth_context: str | None = None
     user_input: str = ""
@@ -95,7 +112,7 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
             auth_context=root_trace.attributes.get("ai.auth.context"),
             trace_id=trace_id,
             span_id=root_trace.span_id,
-            duration_ms=root_trace.duration_ms,
+            duration_ms=root_trace.ended_at and root_trace.duration_ms,
             started_at=root_trace.started_at,
             all_traces=traces_for_trace_id,
         )
@@ -315,20 +332,24 @@ def chat_messages_from_trace_summary(
     include_measurements=False,
 ):
     chat_messages: list[gr.ChatMessage] = []
+    summary_duration: MetadataDict = (
+        {"duration": summary.duration_ms / 1000} if summary.duration_ms else {}
+    )
     chat_messages.append(
         gr.ChatMessage(
             role="user",
             content=summary.user_input,
-            metadata={"title": "User", "duration": summary.duration_ms / 1000},
+            metadata={"title": "User", **summary_duration},
         ),
     )
     for trace in summary.all_traces:
         metadata: MetadataDict = {
             "title": trace.attributes.get("peer.service", trace.span_name),
-            "duration": trace.duration_ms / 1000,
             "id": trace.span_id,
             "status": "done",
         }
+        if trace.ended_at:
+            metadata["duration"] = trace.duration_ms / 1000
         if "exception.message" in trace.attributes:
             metadata.pop("status", None)
         if trace.attributes.get("ai.trace.type") == "tool-invocation":
@@ -386,8 +407,8 @@ def chat_messages_from_trace_summary(
             content=summary.agent_response,
             metadata={
                 "title": "Assistant",
-                "duration": summary.duration_ms / 1000,
                 "id": summary.span_id,
+                **summary_duration
             },
         )
     )

@@ -14,6 +14,7 @@
 
 import inspect
 import sys
+import threading
 import traceback
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -70,6 +71,14 @@ class Tracer(Protocol):
         trace_id: str | None = None,
         attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]: ...
+
+    def persist(self, trace: Trace): ...
+
+
+@runtime_checkable
+class PreviewableTracer(Protocol):
+
+    def preview(self, trace: Trace): ...
 
 
 @runtime_checkable
@@ -178,6 +187,7 @@ class ContextAwareSpanPersistor:
     span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
     trace: Trace
     persistor: Callable[["Trace"], None]
+    previewer: Callable[["Trace"], None] | None
     trace_context: TraceContextProvider
     _reset: Callable[[], None]
     parent_span: Trace | None
@@ -193,11 +203,13 @@ class ContextAwareSpanPersistor:
         resource_attributes: Mapping[str, Any] | None = None,
         span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
         persistor: Callable[["Trace"], None],
+        previewer: Callable[["Trace"], None] | None = None,
         trace_context: TraceContextProvider,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
         self.persistor = persistor
+        self.previewer = previewer
         self.trace_context = trace_context
         self.parent_span = parent_span
         self.scope = scope
@@ -214,6 +226,7 @@ class ContextAwareSpanPersistor:
             parent_span=self.parent_span or context.span,
             scope=self.scope or context.scope,
             resource_attributes=self.resource_attributes or context.resource_attributes,
+            share_preview=self.previewer,
         )
         self._reset = self.trace_context.set_context(span=self.trace)
         return self.trace
@@ -239,6 +252,7 @@ class BaseTracer(Tracer):
         self.trace_context_provider = (
             trace_context_provider or ContextVarTraceContextProvider()
         )
+        self.lock = threading.Lock()
 
     @property
     def context(self) -> TraceContext:
@@ -270,6 +284,7 @@ class BaseTracer(Tracer):
             scope=scope,
             resource_attributes=resource_attributes,
             persistor=self.persist,
+            previewer=self.preview if isinstance(self, PreviewableTracer) else None,
             trace_context=self,
         )
 
@@ -322,13 +337,15 @@ class StructuredLogsTracer(StreamTracer):
         self.logger = SimpleLogger("TraceLogger", stream=self._stream)
 
     def persist(self, trace: Trace):
-        self.logger.info("Trace", trace=trace.as_dict())
+        with self.lock:
+            self.logger.info("Trace", trace=trace.as_dict())
 
 
 class HumanReadableTracer(StreamTracer):
 
     def persist(self, trace: Trace):
-        print(trace.as_human_readable(), file=self._stream)
+        with self.lock:
+            print(trace.as_human_readable(), file=self._stream)
 
 
 class InMemoryTracer(BaseTracer):
@@ -361,9 +378,16 @@ class InMemoryTracer(BaseTracer):
         )
 
 
-class TeeTracer(BaseTracer):
+@runtime_checkable
+class ChainableTracer(Tracer, Protocol):
+    def add_tracer(self, tracer: Tracer) -> "TeeTracer": ...
 
-    _tracers: list[BaseTracer]
+    def remove_tracer(self, tracer: Tracer) -> "TeeTracer": ...
+
+
+class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
+
+    _tracers: list[Tracer]
 
     def __init__(
         self,
@@ -372,13 +396,26 @@ class TeeTracer(BaseTracer):
         super().__init__(trace_context_provider=trace_context_provider)
         self._tracers = []
 
-    def add_tracer(self, tracer: BaseTracer) -> "TeeTracer":
+    @property
+    def tracers(self) -> list[Tracer]:
+        return self._tracers
+
+    def add_tracer(self, tracer: Tracer) -> "TeeTracer":
         self._tracers.append(tracer)
         return self  # allow chaining add_tracer() calls
+
+    def remove_tracer(self, tracer: Tracer) -> "TeeTracer":
+        self._tracers.remove(tracer)
+        return self  # allow chaining remove_tracer() calls
 
     def persist(self, trace: Trace):
         for tracer in self._tracers:
             tracer.persist(trace)
+
+    def preview(self, trace: Trace):
+        for tracer in self._tracers:
+            if isinstance(tracer, PreviewableTracer):
+                tracer.preview(trace)
 
     def get_traces(
         self,

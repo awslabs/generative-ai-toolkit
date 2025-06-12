@@ -15,6 +15,7 @@
 from .trace import Trace
 from .tracer import (
     BaseTracer,
+    ChainableTracer,
     HumanReadableTracer,
     InMemoryTracer,
     NoopTracer,
@@ -25,13 +26,14 @@ from .tracer import (
 )
 
 __all__ = [
-    "Trace",
-    "Tracer",
-    "NoopTracer",
-    "InMemoryTracer",
-    "traced",
+    "BaseTracer",
+    "ChainableTracer",
     "HumanReadableTracer",
+    "InMemoryTracer",
+    "NoopTracer",
     "StructuredLogsTracer",
     "TeeTracer",
-    "BaseTracer",
+    "Trace",
+    "traced",
+    "Tracer",
 ]
