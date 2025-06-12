@@ -17,6 +17,7 @@ import datetime
 import functools
 import html
 import json
+import re
 import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -35,47 +36,50 @@ from generative_ai_toolkit.utils.trace_stream import converse_stream_with_traces
 def chat_ui(agent: Agent):
 
     def conversation_history():
-        return [
-            gr.ChatMessage(role=msg["role"], content=msg["content"][0].get("text", "-"))
-            for msg in agent.messages
-        ]
+        *_, messages = chat_messages_from_traces(agent.traces)
+        return messages
 
-    def user_submit(user_message, history):
-        history = history or []
-        history.append({"role": "user", "content": user_message})
+    def user_submit(user_input):
         return (
-            gr.update(value="", interactive=False, submit_btn=False, stop_btn=True),
-            history,
-        )  # clear textbox, update chatbot
+            gr.update(
+                value="", interactive=False, submit_btn=False, stop_btn=True
+            ),  # clear textbox, update chatbot
+            user_input,
+        )
 
-    def assistant_stream(history):
-        user_input = history[-1]["content"]
-        history.append({"role": "assistant", "content": ""})
+    def assistant_stream(user_input):
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
         for trace in converse_stream_with_traces(agent, user_input):
             traces[trace.span_id] = trace
-            conversation_id, auth_context, messages = chat_messages_from_traces(
-                traces.values()
-            )
+            *_, messages = chat_messages_from_traces(traces.values())
             yield messages
 
     with gr.Blocks(theme="origin") as demo:
-        chatbot = gr.Chatbot(type="messages", height="80vh")
+        last_user_input = gr.State("")
+
+        chatbot = gr.Chatbot(
+            type="messages",
+            height="80vh",
+            label=f"Conversation {agent.conversation_id}",
+        )
         msg = gr.Textbox(
             placeholder="Type your message ...",
             submit_btn=True,
             autofocus=True,
             show_label=False,
         )
-        msg.submit(user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
-            assistant_stream, chatbot, chatbot
-        ).then(
+        msg.submit(
+            user_submit, inputs=[msg], outputs=[msg, last_user_input], queue=False
+        ).then(assistant_stream, inputs=[last_user_input], outputs=[chatbot]).then(
             lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
-            None,
-            [msg],
+            outputs=[msg],
         )
 
-        chatbot.clear(agent.reset, queue=False)
+        def reset_agent():
+            agent.reset()
+            return gr.update(value=[], label=f"Conversation {agent.conversation_id}")
+
+        chatbot.clear(reset_agent, outputs=[chatbot], queue=False)
 
         demo.load(conversation_history, None, [chatbot])
 
@@ -179,7 +183,7 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
             {rest_attributes_json}
             """
         ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return html.escape(res)
+    return escape_html_except_code(res)
 
 
 def get_markdown_for_llm_invocation(llm_trace: Trace):
@@ -260,7 +264,7 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             {rest_attributes_json}
             """
         ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return html.escape(res)
+    return escape_html_except_code(res)
 
 
 def without(d: Mapping, keys: Sequence[str]):
@@ -294,7 +298,7 @@ def get_markdown_generic(trace: Trace):
             )
         ),
     )
-    return html.escape(res)
+    return escape_html_except_code(res)
 
 
 def get_markdown_for_measurement(measurement: Measurement):
@@ -322,7 +326,7 @@ def get_markdown_for_measurement(measurement: Measurement):
             """
         ).format(dimensions=json.dumps(measurement.dimensions))
 
-    return html.escape(res)
+    return escape_html_except_code(res)
 
 
 def chat_messages_from_trace_summary(
@@ -338,7 +342,7 @@ def chat_messages_from_trace_summary(
     chat_messages.append(
         gr.ChatMessage(
             role="user",
-            content=summary.user_input,
+            content=escape_html_except_code(summary.user_input),
             metadata={"title": "User", **summary_duration},
         ),
     )
@@ -404,12 +408,8 @@ def chat_messages_from_trace_summary(
     chat_messages.append(
         gr.ChatMessage(
             role="assistant",
-            content=summary.agent_response,
-            metadata={
-                "title": "Assistant",
-                "id": summary.span_id,
-                **summary_duration
-            },
+            content=escape_html_except_code(summary.agent_response),
+            metadata={"title": "Assistant", "id": summary.span_id, **summary_duration},
         )
     )
     return chat_messages
@@ -866,3 +866,21 @@ def ensure_running_event_loop():
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+
+CODE_RE = re.compile(r"```[\s\S]*?```|`[^`]*`")
+
+
+def escape_html_except_code(text: str) -> str:
+    """
+    Escape HTML characters in the given text, except for code blocks and inline code snippets,
+    because gradio already escapes those.
+    """
+    result = []
+    last_end = 0
+    for m in CODE_RE.finditer(text):
+        result.append(html.escape(text[last_end : m.start()]))
+        result.append(m.group(0))
+        last_end = m.end()
+    result.append(html.escape(text[last_end:]))
+    return "".join(result)
