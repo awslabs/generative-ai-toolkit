@@ -30,7 +30,6 @@ from generative_ai_toolkit.agent import Agent
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
-from generative_ai_toolkit.utils.trace_stream import converse_stream_with_traces
 
 
 def chat_ui(agent: Agent):
@@ -49,7 +48,7 @@ def chat_ui(agent: Agent):
 
     def assistant_stream(user_input):
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
-        for trace in converse_stream_with_traces(agent, user_input):
+        for trace in agent.converse_stream(user_input, stream="traces"):
             traces[trace.span_id] = trace
             *_, messages = chat_messages_from_traces(traces.values())
             yield messages

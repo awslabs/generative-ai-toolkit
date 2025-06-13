@@ -16,15 +16,17 @@ import contextvars
 import json
 import re
 import weakref
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
+from threading import Thread
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
     Unpack,
+    overload,
     runtime_checkable,
 )
 
@@ -43,7 +45,9 @@ from generative_ai_toolkit.conversation_history import (
     InMemoryConversationHistory,
 )
 from generative_ai_toolkit.tracer import (
+    ChainableTracer,
     InMemoryTracer,
+    QueueTracer,
     TeeTracer,
     Trace,
     Tracer,
@@ -193,9 +197,35 @@ class Agent(Tool, Protocol):
         """
         ...
 
+    @overload
     def converse_stream(
-        self, user_input: str, tools: Sequence[Tool] | None = None
+        self,
+        user_input: str,
+        stream: Literal["text"] = "text",
+        tools: Sequence[Tool] | None = None,
     ) -> Iterable[str]:
+        """
+        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+
+        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    # TODO update descriptions since you now can get traces back too
+
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"],
+        tools: Sequence[Tool] | None = None,
+    ) -> Iterable[Trace]:
         """
         Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
 
@@ -228,7 +258,7 @@ class BedrockConverseAgent(Agent):
     _system_prompt: str | None
     _tools: dict[str, Tool]
     _conversation_history: ConversationHistory
-    _tracer: TeeTracer
+    _tracer: ChainableTracer
 
     # class attribute to track the tracer and conversation history instances used,
     # to prevent accidental double usage, see below.
@@ -354,9 +384,8 @@ class BedrockConverseAgent(Agent):
                 self._instances_used.add(ref)
             self._conversation_history = conversation_history
             weakref.finalize(self, self._prune_instances_used)
-        self._tracer = TeeTracer()
         if not tracer:
-            self._tracer.add_tracer(InMemoryTracer(memory_size=50))
+            self._tracer = TeeTracer().add_tracer(InMemoryTracer(memory_size=50))
         else:
             if callable(tracer):
                 tracer = tracer()
@@ -368,7 +397,10 @@ class BedrockConverseAgent(Agent):
                 )
             else:
                 self._instances_used.add(ref)
-            self._tracer.add_tracer(tracer)
+            if isinstance(tracer, ChainableTracer):
+                self._tracer = tracer
+            else:
+                self._tracer = TeeTracer().add_tracer(tracer)
             weakref.finalize(self, self._prune_instances_used)
         resource_attributes = self.tracer.context.resource_attributes
         if "service.name" not in resource_attributes:
@@ -862,8 +894,84 @@ class BedrockConverseAgent(Agent):
             "Too many successive tool invocations:{self.max_converse_iterations} "
         )
 
-    @traced("converse-stream", span_kind="SERVER")
+    @overload
     def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["text"] = "text",
+        tools: Sequence[Callable | Tool] | None = None,
+    ) -> Iterable[str]:
+        """
+        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+
+        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"],
+        tools: Sequence[Callable | Tool] | None = None,
+    ) -> Iterable[Trace]:
+        """
+        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+
+        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    # todo: How would this work with overrides?
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"] | Literal["text"] = "text",
+        tools: Sequence[Callable | Tool] | None = None,
+    ) -> Iterable[str] | Iterable[Trace]:
+        gen = self._converse_stream(user_input=user_input, tools=tools)
+        if stream == "text":
+            return gen
+        try:
+            current_trace = self._tracer.current_trace
+        except ValueError:
+            current_trace = None
+        with QueueTracer() as queue_tracer:
+            self._tracer.add_tracer(queue_tracer)
+            try:
+                thread = Thread(
+                    target=deque,
+                    args=[gen],
+                    kwargs={"maxlen": 0},
+                    daemon=True,
+                    name="converse_stream",
+                )
+                thread.start()
+                try:
+                    # todo: you don't necessarily want preview traces always, should parametrize
+                    for trace in queue_tracer.traces():
+                        yield trace
+                        if trace.parent_span is current_trace and trace.ended_at:
+                            break
+                finally:
+                    thread.join()
+            finally:
+                self._tracer.remove_tracer(queue_tracer)
+
+    @traced("converse-stream", span_kind="SERVER")
+    def _converse_stream(
         self, user_input: str, tools: Sequence[Callable | Tool] | None = None
     ) -> Iterable[str]:
         """
