@@ -14,7 +14,8 @@
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import cached_property
 from typing import (
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
         ConverseStreamOutputTypeDef,
         ConverseStreamRequestTypeDef,
         ConverseStreamResponseTypeDef,
+        MessageUnionTypeDef,
     )
 
 
@@ -56,9 +58,19 @@ RealResponse = Literal["RealResponse"]
 
 
 class MockBedrockConverse:
-    def __init__(self, session: boto3.session.Session | None = None) -> None:
+    def __init__(
+        self,
+        session: boto3.session.Session | None = None,
+        response_generator: (
+            Callable[["MockBedrockConverse", Sequence["MessageUnionTypeDef"]], None]
+            | None
+        ) = None,
+        stream_delay_between_tokens: int | None = None,
+    ) -> None:
         self._session = session
         self._mock_responses: list[ConverseResponseTypeDef | RealResponse] = []
+        self.response_generator = response_generator
+        self.stream_delay_between_tokens = stream_delay_between_tokens
 
     @property
     def mock_responses(self) -> "list[ConverseResponseTypeDef | RealResponse]":
@@ -74,6 +86,10 @@ class MockBedrockConverse:
     def _converse(
         self, **kwargs: Unpack["ConverseRequestTypeDef"]
     ) -> "ConverseResponseTypeDef":
+        if len(self.mock_responses) == 0 and self.response_generator:
+            messages = kwargs.get("messages")
+            if messages:
+                self.response_generator(self, messages)
         if len(self.mock_responses) == 0:
             raise RuntimeError(
                 f"Exhausted all mock responses, but need to reply to message: {kwargs.get('messages', [])[-1]}"
@@ -84,6 +100,10 @@ class MockBedrockConverse:
         return response
 
     def _converse_stream(self, **kwargs: Unpack["ConverseStreamRequestTypeDef"]):
+        if len(self.mock_responses) == 0 and self.response_generator:
+            messages = kwargs.get("messages")
+            if messages:
+                self.response_generator(self, messages)
         if len(self.mock_responses) == 0:
             raise RuntimeError(
                 f"Exhausted all mock responses, but need to reply to message: {kwargs.get('messages', [])[-1]}"
@@ -120,12 +140,23 @@ class MockBedrockConverse:
                     elif "reasoningContent" in content:
                         content["reasoningContent"] = content["reasoningContent"]["reasoningText"]  # type: ignore
                     yield {"messageStart": {"role": "assistant"}}
-                    yield {
-                        "contentBlockDelta": {
-                            "delta": content,
-                            "contentBlockIndex": index,
+                    if "text" in content:
+                        for chunk in self._chunk_text(content["text"]):
+                            if self.stream_delay_between_tokens is not None:
+                                time.sleep(self.stream_delay_between_tokens)
+                            yield {
+                                "contentBlockDelta": {
+                                    "delta": {"text": chunk},
+                                    "contentBlockIndex": index,
+                                }
+                            }
+                    else:
+                        yield {
+                            "contentBlockDelta": {
+                                "delta": content,
+                                "contentBlockIndex": index,
+                            }
                         }
-                    }
                     yield {"contentBlockStop": {"contentBlockIndex": index}}
             yield {
                 "messageStop": {
@@ -255,6 +286,12 @@ class MockBedrockConverse:
 
     def add_real_response(self):
         self.mock_responses.append("RealResponse")
+
+    @staticmethod
+    def _chunk_text(t: str, chunk_size=5):
+        while t:
+            yield t[:chunk_size]
+            t = t[chunk_size:]
 
 
 class LlmInvocationTracer(BaseTracer):

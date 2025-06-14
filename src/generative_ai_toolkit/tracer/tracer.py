@@ -17,11 +17,11 @@ import sys
 import threading
 import traceback
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from functools import wraps
-from queue import Queue
+from queue import Queue, ShutDown
 from typing import (
     Any,
     Literal,
@@ -430,9 +430,7 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         )
 
 
-class QueueTracer(BaseTracer, PreviewableTracer):
-
-    _queue: Queue[Trace] | None
+class ConverseStreamTracer(BaseTracer, PreviewableTracer):
 
     def __init__(
         self,
@@ -440,22 +438,17 @@ class QueueTracer(BaseTracer, PreviewableTracer):
         trace_context_provider: TraceContextProvider | None = None,
     ):
         super().__init__(trace_context_provider)
-        self._queue = None
-        self.maxsize = maxsize
-
-    @property
-    def queue(self):
-        if not self._queue:
-            raise RuntimeError("Queue not initialized")
-        return self._queue
+        self.queue = Queue(maxsize)
 
     def __enter__(self):
-        self._queue  = Queue(self.maxsize)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._queue and self._queue.is_shutdown:
-            self._queue.shutdown()
+        if not self.queue.is_shutdown:
+            self.queue.shutdown()
+
+    def shutdown(self):
+        self.queue.shutdown()
 
     def persist(self, trace: Trace):
         self.queue.put(trace)
@@ -463,6 +456,9 @@ class QueueTracer(BaseTracer, PreviewableTracer):
     def preview(self, trace: Trace):
         self.queue.put(trace)
 
-    def traces(self):
+    def traces(self) -> Iterable[Trace]:
         while True:
-            yield self.queue.get()
+            try:
+                yield self.queue.get()
+            except ShutDown:
+                break

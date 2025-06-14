@@ -22,6 +22,7 @@ import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
+from typing import Literal
 
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
@@ -32,46 +33,100 @@ from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
 
 
-def chat_ui(agent: Agent):
+def chat_ui(
+    agent: Agent,
+    show_traces_drop_down=True,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CONVERSATION_ONLY",
+):
 
-    def conversation_history():
-        *_, messages = chat_messages_from_traces(agent.traces)
+    def conversation_history(show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"]):
+        *_, messages = chat_messages_from_traces(agent.traces, show_traces=show_traces)
         return messages
 
-    def user_submit(user_input):
+    def user_submit(user_input: str):
         return (
             gr.update(
                 value="", interactive=False, submit_btn=False, stop_btn=True
-            ),  # clear textbox, update chatbot
+            ),  # clear textbox
             user_input,
+            gr.update(interactive=False),  # disable toggle traces button
         )
 
-    def assistant_stream(user_input):
+    # todo add stop button implementation
+    def assistant_stream(
+        user_input: str, show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"]
+    ):
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
         for trace in agent.converse_stream(user_input, stream="traces"):
             traces[trace.span_id] = trace
-            *_, messages = chat_messages_from_traces(traces.values())
+            *_, messages = chat_messages_from_traces(
+                traces.values(),
+                show_traces=show_traces,
+            )
             yield messages
 
-    with gr.Blocks(theme="origin") as demo:
+    with gr.Blocks(
+        theme="origin", fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
+
+        show_traces_state = gr.State(value=show_traces)
+
+        with gr.Row(visible=show_traces_drop_down):
+            gr.Markdown("")  # functions as spacer
+            trace_visibility_drop_down = gr.Dropdown(
+                choices=[
+                    ("Show conversation only", "CONVERSATION_ONLY"),
+                    ("Show core traces", "CORE"),
+                    ("Show all traces", "ALL"),
+                ],
+                value=show_traces,
+                label="Show traces",
+                filterable=False,
+                container=False,
+                scale=0,
+                min_width=250,
+            )
+
         last_user_input = gr.State("")
 
         chatbot = gr.Chatbot(
             type="messages",
-            height="80vh",
+            height="70vh" if show_traces_drop_down else "80vh",
             label=f"Conversation {agent.conversation_id}",
         )
+
+        def select_show_traces(
+            show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"],
+        ):
+            return [show_traces, conversation_history(show_traces=show_traces)]
+
+        trace_visibility_drop_down.select(
+            select_show_traces,
+            inputs=[trace_visibility_drop_down],
+            outputs=[show_traces_state, chatbot],
+        )
+
         msg = gr.Textbox(
             placeholder="Type your message ...",
             submit_btn=True,
             autofocus=True,
             show_label=False,
         )
+
         msg.submit(
-            user_submit, inputs=[msg], outputs=[msg, last_user_input], queue=False
-        ).then(assistant_stream, inputs=[last_user_input], outputs=[chatbot]).then(
-            lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
-            outputs=[msg],
+            user_submit,
+            inputs=[msg],
+            outputs=[msg, last_user_input, trace_visibility_drop_down],
+        ).then(
+            assistant_stream,
+            inputs=[last_user_input, show_traces_state],
+            outputs=[chatbot],
+        ).then(
+            lambda: [
+                gr.update(interactive=True, submit_btn=True, stop_btn=False),
+                gr.update(interactive=True),
+            ],
+            outputs=[msg, trace_visibility_drop_down],
         )
 
         def reset_agent():
@@ -80,7 +135,7 @@ def chat_ui(agent: Agent):
 
         chatbot.clear(reset_agent, outputs=[chatbot], queue=False)
 
-        demo.load(conversation_history, None, [chatbot])
+        demo.load(conversation_history, [show_traces_state], [chatbot])
 
         return demo
 
@@ -331,7 +386,7 @@ def get_markdown_for_measurement(measurement: Measurement):
 def chat_messages_from_trace_summary(
     summary: TraceSummary,
     *,
-    include_all_traces=False,
+    include_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     include_measurements=False,
 ):
     chat_messages: list[gr.ChatMessage] = []
@@ -345,65 +400,66 @@ def chat_messages_from_trace_summary(
             metadata={"title": "User", **summary_duration},
         ),
     )
-    for trace in summary.all_traces:
-        metadata: MetadataDict = {
-            "title": trace.attributes.get("peer.service", trace.span_name),
-            "id": trace.span_id,
-            "status": "done",
-        }
-        if trace.ended_at:
-            metadata["duration"] = trace.duration_ms / 1000
-        if "exception.message" in trace.attributes:
-            metadata.pop("status", None)
-        if trace.attributes.get("ai.trace.type") == "tool-invocation":
-            if "ai.tool.error" in trace.attributes:
-                metadata.pop("status", None)
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_tool_invocation(trace),
-                    metadata=metadata,
-                )
-            )
-        elif trace.attributes.get("ai.trace.type") == "llm-invocation":
-            if "ai.llm.response.error" in trace.attributes:
-                metadata.pop("status", None)
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_llm_invocation(trace),
-                    metadata=metadata,
-                )
-            )
-        elif include_all_traces:
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_generic(trace),
-                    metadata=metadata,
-                )
-            )
-        else:
-            continue  # skip including measurements for traces we don't show
-
-        if not include_measurements:
-            continue
-        for measurement in summary.measurements_per_trace.get(
-            (trace.trace_id, trace.span_id), []
-        ):
+    if include_traces != "CONVERSATION_ONLY":
+        for trace in summary.all_traces:
             metadata: MetadataDict = {
-                "title": f"Measurement: {measurement.name}{" [NOK]" if measurement.validation_passed is False else ""}",
-                "parent_id": trace.span_id,
+                "title": trace.attributes.get("peer.service", trace.span_name),
+                "id": trace.span_id,
+                "status": "done",
             }
-            if measurement.validation_passed is not False:
-                metadata["status"] = "done"
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_measurement(measurement),
-                    metadata=metadata,
+            if trace.ended_at:
+                metadata["duration"] = trace.duration_ms / 1000
+            if "exception.message" in trace.attributes:
+                metadata.pop("status", None)
+            if trace.attributes.get("ai.trace.type") == "tool-invocation":
+                if "ai.tool.error" in trace.attributes:
+                    metadata.pop("status", None)
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_tool_invocation(trace),
+                        metadata=metadata,
+                    )
                 )
-            )
+            elif trace.attributes.get("ai.trace.type") == "llm-invocation":
+                if "ai.llm.response.error" in trace.attributes:
+                    metadata.pop("status", None)
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_llm_invocation(trace),
+                        metadata=metadata,
+                    )
+                )
+            elif include_traces == "ALL":
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_generic(trace),
+                        metadata=metadata,
+                    )
+                )
+            else:
+                continue  # skip including measurements for traces we don't show
+
+            if not include_measurements:
+                continue
+            for measurement in summary.measurements_per_trace.get(
+                (trace.trace_id, trace.span_id), []
+            ):
+                metadata: MetadataDict = {
+                    "title": f"Measurement: {measurement.name}{" [NOK]" if measurement.validation_passed is False else ""}",
+                    "parent_id": trace.span_id,
+                }
+                if measurement.validation_passed is not False:
+                    metadata["status"] = "done"
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_measurement(measurement),
+                        metadata=metadata,
+                    )
+                )
     chat_messages.append(
         gr.ChatMessage(
             role="assistant",
@@ -416,7 +472,7 @@ def chat_messages_from_trace_summary(
 
 def chat_messages_from_traces(
     traces: Iterable[Trace],
-    show_all_traces=False,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
 ):
     traces = list(traces)
     if not traces:
@@ -431,7 +487,7 @@ def chat_messages_from_traces(
         for summary in summaries
         for msg in chat_messages_from_trace_summary(
             summary,
-            include_all_traces=show_all_traces,
+            include_traces=show_traces,
         )
     ]
     return conversation_id, auth_context, messages
@@ -439,7 +495,7 @@ def chat_messages_from_traces(
 
 def chat_messages_from_conversation_measurements(
     conv_measurements: ConversationMeasurements,
-    show_all_traces=False,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     show_measurements=False,
 ):
     summaries = get_summaries_for_conversation_measurements(conv_measurements)
@@ -454,7 +510,7 @@ def chat_messages_from_conversation_measurements(
         for summary in summaries
         for msg in chat_messages_from_trace_summary(
             summary,
-            include_all_traces=show_all_traces,
+            include_traces=show_traces,
             include_measurements=show_measurements,
         )
     ]
@@ -486,16 +542,18 @@ def traces_ui(
 
     ensure_running_event_loop()
 
-    with gr.Blocks(fill_width=True, title="Generative AI Toolkit") as demo:
+    with gr.Blocks(
+        theme="origin", fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
         with gr.Row():
-            gr.Markdown(
-                f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
+            gr.Markdown("")
+            toggle_all_traces = gr.Button(
+                "Show all traces", scale=0, min_width=200, size="sm"
             )
-            toggle_all_traces = gr.Button("Show all traces", scale=0, min_width=200)
         chatbot = gr.Chatbot(
             type="messages",
             height="full",
-            label="Conversation",
+            label=f"Conversation {conversation_id}",
             value=messages,  # type: ignore
         )
 
@@ -504,7 +562,7 @@ def traces_ui(
             new_label = "Hide internal traces" if new_state else "Show all traces"
             *_, messages = chat_messages_from_traces(
                 traces,
-                show_all_traces=new_state,
+                show_traces="ALL" if new_state else "CORE",
             )
             return gr.update(value=new_label), new_state, messages
 
@@ -528,22 +586,23 @@ def measurements_ui(
 
     def show_conversation(
         conversation_index: int,
-        show_all_traces=False,
-        show_measurements=False,
+        show_all_traces: bool,
+        show_measurements: bool,
     ):
         conv_measurements = all_measurements[conversation_index]
 
         conversation_id, auth_context, messages = (
             chat_messages_from_conversation_measurements(
                 conv_measurements,
-                show_all_traces=show_all_traces,
+                show_traces="ALL" if show_all_traces else "CORE",
                 show_measurements=show_measurements,
             )
         )
-        header_text = (
-            f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
+        return (
+            gr.update(value=messages, label=f"Conversation {conversation_id}"),
+            gr.update(visible=False),
+            gr.update(visible=True),
         )
-        return header_text, messages, gr.update(visible=False), gr.update(visible=True)
 
     def go_back():
         return gr.update(visible=True), gr.update(visible=False)
@@ -580,7 +639,9 @@ def measurements_ui(
 
     ensure_running_event_loop()
 
-    with gr.Blocks(css=css, fill_width=True, title="Generative AI Toolkit") as demo:
+    with gr.Blocks(
+        theme="origin", css=css, fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
         with gr.Column(
             visible=True, elem_classes="genaitk-scroll-column"
         ) as parent_page:
@@ -778,12 +839,14 @@ def measurements_ui(
 
         with gr.Column(visible=False) as child_page:
             with gr.Row():
-                header = gr.Markdown("Conversation:")
-                toggle_all_traces = gr.Button("Show all traces", scale=0, min_width=200)
-                toggle_measurements = gr.Button(
-                    "Hide measurements", scale=0, min_width=200
+                header = gr.Markdown("")
+                toggle_all_traces = gr.Button(
+                    "Show all traces", scale=0, min_width=200, size="sm"
                 )
-                back_button = gr.Button("Back", scale=0, min_width=200)
+                toggle_measurements = gr.Button(
+                    "Hide measurements", scale=0, min_width=200, size="sm"
+                )
+                back_button = gr.Button("Back", scale=0, min_width=200, size="sm")
 
             chatbot = gr.Chatbot(
                 type="messages",
@@ -807,7 +870,7 @@ def measurements_ui(
                     show_all_traces_toggle_state,
                     show_measurements_toggle_state,
                 ],
-                outputs=[header, chatbot, parent_page, child_page],
+                outputs=[chatbot, parent_page, child_page],
                 queue=False,
             )
 
@@ -832,7 +895,7 @@ def measurements_ui(
                 show_all_traces_toggle_state,
                 show_measurements_toggle_state,
             ],
-            outputs=[header, chatbot, parent_page, child_page],
+            outputs=[chatbot, parent_page, child_page],
             queue=False,
         )
 
@@ -847,7 +910,7 @@ def measurements_ui(
                 show_all_traces_toggle_state,
                 show_measurements_toggle_state,
             ],
-            outputs=[header, chatbot, parent_page, child_page],
+            outputs=[chatbot, parent_page, child_page],
             queue=False,
         )
 

@@ -16,7 +16,7 @@ import contextvars
 import json
 import re
 import weakref
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from threading import Thread
@@ -46,8 +46,8 @@ from generative_ai_toolkit.conversation_history import (
 )
 from generative_ai_toolkit.tracer import (
     ChainableTracer,
+    ConverseStreamTracer,
     InMemoryTracer,
-    QueueTracer,
     TeeTracer,
     Trace,
     Tracer,
@@ -205,9 +205,11 @@ class Agent(Tool, Protocol):
         tools: Sequence[Tool] | None = None,
     ) -> Iterable[str]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Response fragments (text chunks) are yielded as they are produced.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -217,8 +219,6 @@ class Agent(Tool, Protocol):
         """
         ...
 
-    # TODO update descriptions since you now can get traces back too
-
     @overload
     def converse_stream(
         self,
@@ -227,9 +227,11 @@ class Agent(Tool, Protocol):
         tools: Sequence[Tool] | None = None,
     ) -> Iterable[Trace]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Traces are yielded as they are produced by the agent and its tools.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -335,7 +337,7 @@ class BedrockConverseAgent(Agent):
         performance_config : Literal["standard", "optimized"] | None, optional
             To use a latency-optimized version of the model, set to optimized
         tracer : Tracer | Callable[..., Tracer] | None, optional
-            Tracer for monitoring agent behavior, by default InMemoryTracer
+            Tracer for monitoring agent behavior, by default InMemoryTracer (wrapped in TeeTracer)
         session : boto3.session.Session | None, optional
             AWS session for Bedrock API calls, by default None (use default session)
         bedrock_client : BedrockRuntimeClient | None, optional
@@ -902,9 +904,11 @@ class BedrockConverseAgent(Agent):
         tools: Sequence[Callable | Tool] | None = None,
     ) -> Iterable[str]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Response fragments (text chunks) are yielded as they are produced.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -922,9 +926,11 @@ class BedrockConverseAgent(Agent):
         tools: Sequence[Callable | Tool] | None = None,
     ) -> Iterable[Trace]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Traces are yielded as they are produced by the agent and its tools.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -944,48 +950,28 @@ class BedrockConverseAgent(Agent):
         gen = self._converse_stream(user_input=user_input, tools=tools)
         if stream == "text":
             return gen
-        try:
-            current_trace = self._tracer.current_trace
-        except ValueError:
-            current_trace = None
-        with QueueTracer() as queue_tracer:
-            self._tracer.add_tracer(queue_tracer)
+        with ConverseStreamTracer() as tracer:
+            self._tracer.add_tracer(tracer)
             try:
+
                 thread = Thread(
-                    target=deque,
-                    args=[gen],
-                    kwargs={"maxlen": 0},
+                    target=self._generate_traces,
+                    args=[gen, tracer],
                     daemon=True,
                     name="converse_stream",
                 )
                 thread.start()
                 try:
-                    # todo: you don't necessarily want preview traces always, should parametrize
-                    for trace in queue_tracer.traces():
-                        yield trace
-                        if trace.parent_span is current_trace and trace.ended_at:
-                            break
+                    yield from tracer.traces()
                 finally:
                     thread.join()
             finally:
-                self._tracer.remove_tracer(queue_tracer)
+                self._tracer.remove_tracer(tracer)
 
     @traced("converse-stream", span_kind="SERVER")
     def _converse_stream(
         self, user_input: str, tools: Sequence[Callable | Tool] | None = None
     ) -> Iterable[str]:
-        """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
-
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
-
-        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
-
-        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
-
-        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
-        """
-
         # If the current instance has an override for converse, use that one instead
         if (
             type(self).converse_stream is BedrockConverseAgent.converse_stream
@@ -1370,6 +1356,14 @@ class BedrockConverseAgent(Agent):
                 }
             },
         }
+
+    @staticmethod
+    def _generate_traces(gen: Iterable[str], tracer: ConverseStreamTracer):
+        try:
+            for _ in gen:
+                pass
+        finally:
+            tracer.shutdown()
 
 
 @runtime_checkable
