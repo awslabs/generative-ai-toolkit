@@ -36,7 +36,7 @@ from generative_ai_toolkit.tracer.trace import Trace
 def chat_ui(
     agent: Agent,
     show_traces_drop_down=True,
-    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CONVERSATION_ONLY",
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
 ):
 
     def conversation_history(show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"]):
@@ -91,7 +91,7 @@ def chat_ui(
 
         chatbot = gr.Chatbot(
             type="messages",
-            height="70vh" if show_traces_drop_down else "80vh",
+            height="75vh" if show_traces_drop_down else "80vh",
             label=f"Conversation {agent.conversation_id}",
         )
 

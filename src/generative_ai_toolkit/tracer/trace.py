@@ -24,14 +24,14 @@ from typing import (
     NamedTuple,
 )
 
-deepcopy_lock = threading.Lock()
+LOCK = threading.Lock()
 IMMUTABLE_TYPES = (int, float, bool, str, type(None), tuple, frozenset)
 
 
-def thread_safe_deepcopy(obj):
+def thread_safe_deepcopy(obj, lock=LOCK):
     if isinstance(obj, IMMUTABLE_TYPES):
         return obj
-    with deepcopy_lock:
+    with lock:
         return copy.deepcopy(obj)
 
 

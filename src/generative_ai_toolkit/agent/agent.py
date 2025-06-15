@@ -696,8 +696,13 @@ class BedrockConverseAgent(Agent):
 
         # If the current instance has an override for converse_stream, use that one instead
         if (
-            type(self).converse is BedrockConverseAgent.converse
-            and type(self).converse_stream is not BedrockConverseAgent.converse_stream
+            type(self) is not BedrockConverseAgent
+            and type(self).converse is BedrockConverseAgent.converse
+            and (
+                type(self).converse_stream is not BedrockConverseAgent.converse_stream
+                or type(self)._converse_stream
+                is not BedrockConverseAgent._converse_stream
+            )
         ):
             return "".join(self.converse_stream(user_input, tools=tools))
 
@@ -940,7 +945,6 @@ class BedrockConverseAgent(Agent):
         """
         ...
 
-    # todo: How would this work with overrides?
     def converse_stream(
         self,
         user_input: str,
@@ -953,10 +957,10 @@ class BedrockConverseAgent(Agent):
         with ConverseStreamTracer() as tracer:
             self._tracer.add_tracer(tracer)
             try:
-
+                ctx = contextvars.copy_context()
                 thread = Thread(
-                    target=self._generate_traces,
-                    args=[gen, tracer],
+                    target=ctx.run,
+                    args=[self._generate_traces, gen, tracer],
                     daemon=True,
                     name="converse_stream",
                 )
@@ -974,7 +978,8 @@ class BedrockConverseAgent(Agent):
     ) -> Iterable[str]:
         # If the current instance has an override for converse, use that one instead
         if (
-            type(self).converse_stream is BedrockConverseAgent.converse_stream
+            type(self) is not BedrockConverseAgent
+            and type(self).converse_stream is BedrockConverseAgent.converse_stream
             and type(self).converse is not BedrockConverseAgent.converse
         ):
             return self.converse(user_input, tools=tools)
