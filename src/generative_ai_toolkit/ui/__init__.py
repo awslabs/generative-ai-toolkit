@@ -22,6 +22,7 @@ import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
+from threading import Event
 from typing import Literal
 
 import gradio as gr
@@ -45,12 +46,14 @@ def chat_ui(
                 value="", interactive=False, submit_btn=False, stop_btn=True
             ),  # clear textbox
             user_input,
+            Event(),
         )
 
-    # todo add stop button implementation
-    def assistant_stream(user_input: str):
+    def assistant_stream(user_input: str, stop_event: Event | None):
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
-        for trace in agent.converse_stream(user_input, stream="traces"):
+        for trace in agent.converse_stream(
+            user_input, stream="traces", stop_event=stop_event
+        ):
             traces[trace.span_id] = trace
             yield list(traces.values())
 
@@ -74,6 +77,7 @@ def chat_ui(
 
         show_traces_state = gr.State(value=show_traces)
         traces_state = gr.State(value=agent.traces)
+        stop_event = gr.State(value=None)
 
         with gr.Row(visible=show_traces_drop_down):
             gr.Markdown("")  # functions as spacer
@@ -105,6 +109,14 @@ def chat_ui(
             outputs=[show_traces_state],
         )
 
+        show_traces_state.change(
+            traces_state_change,
+            inputs=[traces_state, show_traces_state],
+            outputs=[chatbot],
+            show_progress="hidden",
+            show_progress_on=[],
+        )
+
         msg = gr.Textbox(
             placeholder="Type your message ...",
             submit_btn=True,
@@ -115,15 +127,17 @@ def chat_ui(
         msg.submit(
             user_submit,
             inputs=[msg],
-            outputs=[msg, last_user_input],
+            outputs=[msg, last_user_input, stop_event],
         ).then(
             assistant_stream,
-            inputs=[last_user_input],
+            inputs=[last_user_input, stop_event],
             outputs=[traces_state],
         ).then(
             lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
             outputs=[msg],
         )
+
+        msg.stop(lambda x: x and x.set(), inputs=[stop_event])
 
         traces_state.change(
             traces_state_change,

@@ -112,33 +112,43 @@ class Trace:
         self.span_status = span_status
         self._share_preview = share_preview
 
-    def __deepcopy__(self, memo):
+    def clone(self):
         """
-        Return a deep copy of the trace.
+        Return a stand-alone clone of the trace.
 
-        There's some peculiarities to be aware of:
-        - The copy will include all attributes, except for the parent span.
-        - The copy's attributes field will include all inheritable attributes from its parents.
+        To avoid having to clone the entire chain of parent spans:
+        - The clone will only include a pointer to its direct parent
+        - That parent span will will only have it's name, span id and trace id set
+        - The clone's attributes field will include all inheritable attributes from its parents
+
+        For all intents and purposes, the clone will "look" the same as the original.
         """
-
         copied = type(self)(
             span_name=self.span_name,
             span_kind=self.span_kind,
             trace_id=self.trace_id,
             span_id=self.span_id,
-            parent_span=None,
-            started_at=copy.deepcopy(self.started_at, memo),
-            ended_at=copy.deepcopy(self.ended_at, memo),
-            attributes=dict(copy.deepcopy(self.attributes, memo)),
+            parent_span=(
+                type(self)(
+                    span_name=self.parent_span.span_name,
+                    trace_id=self.parent_span.trace_id,
+                    span_id=self.parent_span.span_id,
+                )
+                if self.parent_span
+                else None
+            ),
+            started_at=self.started_at,
+            ended_at=self.ended_at,
+            attributes=dict(thread_safe_deepcopy(self.attributes)),
             span_status=self.span_status,
-            resource_attributes=copy.deepcopy(self.resource_attributes, memo),
-            scope=copy.deepcopy(self.scope, memo),
+            resource_attributes=thread_safe_deepcopy(self.resource_attributes),
+            scope=self.scope,
         )
         return copied
 
     def share_preview(self):
         if self._share_preview:
-            self._share_preview(thread_safe_deepcopy(self))
+            self._share_preview(self.clone())
 
     @property
     def attributes(self) -> Mapping[str, Any]:
