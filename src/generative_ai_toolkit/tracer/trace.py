@@ -22,6 +22,7 @@ from typing import (
     Any,
     Literal,
     NamedTuple,
+    TypedDict,
 )
 
 LOCK = threading.Lock()
@@ -33,6 +34,26 @@ def thread_safe_deepcopy(obj, lock=LOCK):
         return obj
     with lock:
         return copy.deepcopy(obj)
+
+
+class TraceScopeDict(TypedDict):
+    name: str
+    version: str
+
+
+class TraceDict(TypedDict):
+    span_name: str
+    trace_id: str
+    span_id: str
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
+    parent_span_id: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int | None
+    attributes: Mapping[str, Any]
+    span_status: Literal["UNSET", "OK", "ERROR"]
+    resource_attributes: Mapping[str, Any]
+    scope: TraceScopeDict
 
 
 class Trace:
@@ -91,9 +112,33 @@ class Trace:
         self.span_status = span_status
         self._share_preview = share_preview
 
+    def __deepcopy__(self, memo):
+        """
+        Return a deep copy of the trace.
+
+        There's some peculiarities to be aware of:
+        - The copy will include all attributes, except for the parent span.
+        - The copy's attributes field will include all inheritable attributes from its parents.
+        """
+
+        copied = type(self)(
+            span_name=self.span_name,
+            span_kind=self.span_kind,
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            parent_span=None,
+            started_at=copy.deepcopy(self.started_at, memo),
+            ended_at=copy.deepcopy(self.ended_at, memo),
+            attributes=dict(copy.deepcopy(self.attributes, memo)),
+            span_status=self.span_status,
+            resource_attributes=copy.deepcopy(self.resource_attributes, memo),
+            scope=copy.deepcopy(self.scope, memo),
+        )
+        return copied
+
     def share_preview(self):
         if self._share_preview:
-            self._share_preview(self)
+            self._share_preview(thread_safe_deepcopy(self))
 
     @property
     def attributes(self) -> Mapping[str, Any]:
@@ -147,7 +192,7 @@ class Trace:
             f")"
         )
 
-    def as_dict(self):
+    def as_dict(self) -> TraceDict:
         return {
             "span_name": self.span_name,
             "span_kind": self.span_kind,
@@ -156,6 +201,7 @@ class Trace:
             "parent_span_id": self.parent_span.span_id if self.parent_span else None,
             "started_at": self.started_at,
             "ended_at": self.ended_at if self.ended_at else None,
+            "duration_ms": self.duration_ms if self.ended_at else None,
             "attributes": self.attributes,
             "span_status": self.span_status,
             "resource_attributes": self.resource_attributes,

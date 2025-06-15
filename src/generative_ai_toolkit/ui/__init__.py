@@ -39,37 +39,41 @@ def chat_ui(
     show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
 ):
 
-    def conversation_history(show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"]):
-        *_, messages = chat_messages_from_traces(agent.traces, show_traces=show_traces)
-        return messages
-
     def user_submit(user_input: str):
         return (
             gr.update(
                 value="", interactive=False, submit_btn=False, stop_btn=True
             ),  # clear textbox
             user_input,
-            gr.update(interactive=False),  # disable toggle traces button
         )
 
     # todo add stop button implementation
-    def assistant_stream(
-        user_input: str, show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"]
-    ):
+    def assistant_stream(user_input: str):
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
         for trace in agent.converse_stream(user_input, stream="traces"):
             traces[trace.span_id] = trace
-            *_, messages = chat_messages_from_traces(
-                traces.values(),
-                show_traces=show_traces,
-            )
-            yield messages
+            yield list(traces.values())
+
+    def traces_state_change(
+        traces: Iterable[Trace],
+        show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
+    ):
+        *_, messages = chat_messages_from_traces(traces, show_traces=show_traces)
+        return messages
+
+    def reset_agent():
+        agent.reset()
+        return (
+            gr.update(value=[], label=f"Conversation {agent.conversation_id}"),
+            [],
+        )
 
     with gr.Blocks(
         theme="origin", fill_width=True, title="Generative AI Toolkit"
     ) as demo:
 
         show_traces_state = gr.State(value=show_traces)
+        traces_state = gr.State(value=agent.traces)
 
         with gr.Row(visible=show_traces_drop_down):
             gr.Markdown("")  # functions as spacer
@@ -95,15 +99,10 @@ def chat_ui(
             label=f"Conversation {agent.conversation_id}",
         )
 
-        def select_show_traces(
-            show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"],
-        ):
-            return [show_traces, conversation_history(show_traces=show_traces)]
-
         trace_visibility_drop_down.select(
-            select_show_traces,
+            lambda show_traces: show_traces,
             inputs=[trace_visibility_drop_down],
-            outputs=[show_traces_state, chatbot],
+            outputs=[show_traces_state],
         )
 
         msg = gr.Textbox(
@@ -116,26 +115,28 @@ def chat_ui(
         msg.submit(
             user_submit,
             inputs=[msg],
-            outputs=[msg, last_user_input, trace_visibility_drop_down],
+            outputs=[msg, last_user_input],
         ).then(
             assistant_stream,
-            inputs=[last_user_input, show_traces_state],
-            outputs=[chatbot],
+            inputs=[last_user_input],
+            outputs=[traces_state],
         ).then(
-            lambda: [
-                gr.update(interactive=True, submit_btn=True, stop_btn=False),
-                gr.update(interactive=True),
-            ],
-            outputs=[msg, trace_visibility_drop_down],
+            lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
+            outputs=[msg],
         )
 
-        def reset_agent():
-            agent.reset()
-            return gr.update(value=[], label=f"Conversation {agent.conversation_id}")
+        traces_state.change(
+            traces_state_change,
+            inputs=[traces_state, show_traces_state],
+            outputs=[chatbot],
+            show_progress="hidden",
+            show_progress_on=[],
+            queue=True,
+        )
 
-        chatbot.clear(reset_agent, outputs=[chatbot], queue=False)
+        chatbot.clear(reset_agent, outputs=[chatbot, traces_state])
 
-        demo.load(conversation_history, [show_traces_state], [chatbot])
+        demo.load(lambda: agent.traces, outputs=[traces_state])
 
         return demo
 
