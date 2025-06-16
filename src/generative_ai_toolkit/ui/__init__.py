@@ -561,7 +561,7 @@ def traces_ui(
         theme="origin", fill_width=True, title="Generative AI Toolkit"
     ) as demo:
         with gr.Row():
-            gr.Markdown("")
+            gr.Markdown("")  # functions as spacer
             toggle_all_traces = gr.Button(
                 "Show all traces", scale=0, min_width=200, size="sm"
             )
@@ -854,7 +854,7 @@ def measurements_ui(
 
         with gr.Column(visible=False) as child_page:
             with gr.Row():
-                header = gr.Markdown("")
+                gr.Markdown("")  # functions as spacer
                 toggle_all_traces = gr.Button(
                     "Show all traces", scale=0, min_width=200, size="sm"
                 )
@@ -945,17 +945,17 @@ def ensure_running_event_loop():
         asyncio.set_event_loop(loop)
 
 
-CODE_RE = re.compile(r"```[\s\S]*?```|`[^`]*`")
+CODE_REGEXP = re.compile(r"```[\s\S]*?```|`[^`]*`")
 
 
-def escape_html_except_code(text: str) -> str:
+def escape_html_except_code(text: str, code_regexp=CODE_REGEXP) -> str:
     """
-    Escape HTML characters in the given text, except for code blocks and inline code snippets,
-    because gradio already escapes those.
+    Escape HTML characters in the given text, except for code blocks (denoted by ```),
+    and inline code snippets (denoted by `), because gradio already escapes those.
     """
     result = []
     last_end = 0
-    for m in CODE_RE.finditer(text):
+    for m in code_regexp.finditer(text):
         result.append(html.escape(text[last_end : m.start()]))
         result.append(m.group(0))
         last_end = m.end()

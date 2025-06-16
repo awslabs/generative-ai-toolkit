@@ -17,7 +17,7 @@ import sys
 import threading
 import traceback
 from collections import deque
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from functools import wraps
@@ -78,6 +78,8 @@ class Tracer(Protocol):
 
 @runtime_checkable
 class PreviewableTracer(Protocol):
+
+    preview_enabled: bool
 
     def preview(self, trace: Trace): ...
 
@@ -285,7 +287,11 @@ class BaseTracer(Tracer):
             scope=scope,
             resource_attributes=resource_attributes,
             persistor=self.persist,
-            previewer=self.preview if isinstance(self, PreviewableTracer) else None,
+            previewer=(
+                self.preview
+                if isinstance(self, PreviewableTracer) and self.preview_enabled
+                else None
+            ),
             trace_context=self,
         )
 
@@ -389,6 +395,7 @@ class ChainableTracer(Tracer, Protocol):
 class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
 
     _tracers: list[Tracer]
+    preview_enabled = False
 
     def __init__(
         self,
@@ -402,11 +409,19 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         return self._tracers
 
     def add_tracer(self, tracer: Tracer) -> "TeeTracer":
+        if not self.preview_enabled and isinstance(tracer, PreviewableTracer):
+            self.preview_enabled = True
         self._tracers.append(tracer)
         return self  # allow chaining add_tracer() calls
 
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer":
         self._tracers.remove(tracer)
+        for remaining_tracer in self._tracers:
+            if isinstance(remaining_tracer, PreviewableTracer):
+                break
+            else:
+                self.preview_enabled = False
+
         return self  # allow chaining remove_tracer() calls
 
     def persist(self, trace: Trace):
@@ -430,7 +445,14 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         )
 
 
-class ConverseStreamTracer(BaseTracer, PreviewableTracer):
+class IterableTracer(BaseTracer, PreviewableTracer):
+    """
+    Threadsafe tracer that allows you to iterate over incoming traces.
+    The iteration can by stopped by signalling `shutdown()`.
+    This tracer can e.g. be used for tracing one "turn", i.e. one invocation of converse_stream()
+    """
+
+    preview_enabled = True
 
     def __init__(
         self,
@@ -456,7 +478,7 @@ class ConverseStreamTracer(BaseTracer, PreviewableTracer):
     def preview(self, trace: Trace):
         self.queue.put(trace)
 
-    def traces(self) -> Iterable[Trace]:
+    def __iter__(self):
         while True:
             try:
                 yield self.queue.get()

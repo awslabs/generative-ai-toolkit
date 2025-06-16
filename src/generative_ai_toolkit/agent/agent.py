@@ -46,8 +46,8 @@ from generative_ai_toolkit.conversation_history import (
 )
 from generative_ai_toolkit.tracer import (
     ChainableTracer,
-    ConverseStreamTracer,
     InMemoryTracer,
+    IterableTracer,
     TeeTracer,
     Trace,
     Tracer,
@@ -975,7 +975,7 @@ class BedrockConverseAgent(Agent):
         )
         if stream == "text":
             return gen
-        with ConverseStreamTracer() as tracer:
+        with IterableTracer() as tracer:
             self._tracer.add_tracer(tracer)
             try:
                 ctx = contextvars.copy_context()
@@ -987,7 +987,7 @@ class BedrockConverseAgent(Agent):
                 )
                 thread.start()
                 try:
-                    yield from tracer.traces()
+                    yield from tracer
                 finally:
                     thread.join()
             finally:
@@ -1394,7 +1394,7 @@ class BedrockConverseAgent(Agent):
         }
 
     @staticmethod
-    def _generate_traces(gen: Iterable[str], tracer: ConverseStreamTracer):
+    def _generate_traces(gen: Iterable[str], tracer: IterableTracer):
         try:
             for _ in gen:
                 pass
