@@ -65,7 +65,7 @@ class MockBedrockConverse:
             Callable[["MockBedrockConverse", Sequence["MessageUnionTypeDef"]], None]
             | None
         ) = None,
-        stream_delay_between_tokens: int | None = None,
+        stream_delay_between_tokens: int | float | None = None,
     ) -> None:
         self._session = session
         self._mock_responses: list[ConverseResponseTypeDef | RealResponse] = []

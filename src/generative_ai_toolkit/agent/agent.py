@@ -15,6 +15,8 @@
 import contextvars
 import json
 import re
+import sys
+import traceback
 import weakref
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -668,6 +670,10 @@ class BedrockConverseAgent(Agent):
             except Exception as err:
                 tool_error = err
                 trace.add_attribute("ai.tool.error", err)
+                trace.add_attribute(
+                    "ai.tool.error.traceback",
+                    "".join(traceback.format_exception(*sys.exc_info())),
+                )
 
             return {
                 "toolUseId": tool_use["toolUseId"],

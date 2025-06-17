@@ -221,26 +221,53 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     tool_input = attributes.pop("ai.tool.input")
     tool_output = attributes.pop("ai.tool.output", None)
     tool_error = attributes.pop("ai.tool.error", None)
-    res = textwrap.dedent(
-        """
-        **Input**
-        {tool_input}
-        """
-    ).format(tool_input=tool_input)
+    tool_error_traceback = attributes.pop("ai.tool.error.traceback", None)
+    res = (
+        textwrap.dedent(
+            """
+            ##### Input
+
+            ~~~json
+            {tool_input_json}
+            ~~~
+            """
+        )
+        .lstrip()
+        .format(tool_input_json=json.dumps(tool_input, indent=2, default=str))
+    )
     if tool_output:
         res += textwrap.dedent(
             """
-            **Output**
-            {tool_output}
+            ##### Output
+
             """
-        ).format(tool_output=tool_output)
-    if tool_error:
+        ).lstrip()
+        if isinstance(tool_output, str | float | int | bool):
+            res += textwrap.dedent(
+                """
+                ~~~
+                {tool_output_txt}
+                ~~~
+                """
+            ).format(tool_output_txt=tool_output)
+        else:
+            res += textwrap.dedent(
+                """
+                ~~~json
+                {tool_output_json}
+                ~~~
+                """
+            ).format(tool_output_json=json.dumps(tool_output, indent=2, default=str))
+    if tool_error_traceback:
         res += textwrap.dedent(
             """
-            **Error**
-            {tool_error}
+            ##### Error
+
+            ~~~
+            {tool_error_text}
+            ~~~
             """
-        ).format(tool_error=tool_error)
+        ).format(tool_error_text=tool_error_traceback or str(tool_error))
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
@@ -248,11 +275,16 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     if rest_attributes:
         res += textwrap.dedent(
             """
-            **Attributes**
+            ##### Other attributes
+
+            ~~~json
             {rest_attributes_json}
+            ~~~
             """
-        ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return escape_html_except_code(res)
+        ).format(
+            rest_attributes_json=json.dumps(rest_attributes, indent=2, default=str)
+        )
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def get_markdown_for_llm_invocation(llm_trace: Trace):
@@ -333,7 +365,7 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             {rest_attributes_json}
             """
         ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return escape_html_except_code(res)
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def without(d: Mapping, keys: Sequence[str]):
@@ -367,7 +399,7 @@ def get_markdown_generic(trace: Trace):
             )
         ),
     )
-    return escape_html_except_code(res)
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def get_markdown_for_measurement(measurement: Measurement):
@@ -395,7 +427,7 @@ def get_markdown_for_measurement(measurement: Measurement):
             """
         ).format(dimensions=json.dumps(measurement.dimensions))
 
-    return escape_html_except_code(res)
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def chat_messages_from_trace_summary(
@@ -411,7 +443,9 @@ def chat_messages_from_trace_summary(
     chat_messages.append(
         gr.ChatMessage(
             role="user",
-            content=escape_html_except_code(summary.user_input),
+            content=EscapeHtml.escape_html_except_code(
+                summary.user_input, code_fence_style="backtick"
+            ),
             metadata={"title": "User", **summary_duration},
         ),
     )
@@ -478,7 +512,9 @@ def chat_messages_from_trace_summary(
     chat_messages.append(
         gr.ChatMessage(
             role="assistant",
-            content=escape_html_except_code(summary.agent_response),
+            content=EscapeHtml.escape_html_except_code(
+                summary.agent_response, code_fence_style="backtick"
+            ),
             metadata={"title": "Assistant", "id": summary.span_id, **summary_duration},
         )
     )
@@ -945,19 +981,32 @@ def ensure_running_event_loop():
         asyncio.set_event_loop(loop)
 
 
-CODE_REGEXP = re.compile(r"```[\s\S]*?```|`[^`]*`")
+class EscapeHtml:
 
+    CODE_REGEXP_BACKTICK = re.compile(r"^```[\s\S]*?```|`[^`]*`", re.MULTILINE)
+    CODE_REGEXP_TILDE = re.compile(r"^~~~[\s\S]*?~~~|~[^~]*~", re.MULTILINE)
+    CODE_FENCE_REGEX_MAP = {
+        "backtick": CODE_REGEXP_BACKTICK,
+        "tilde": CODE_REGEXP_TILDE,
+    }
 
-def escape_html_except_code(text: str, code_regexp=CODE_REGEXP) -> str:
-    """
-    Escape HTML characters in the given text, except for code blocks (denoted by ```),
-    and inline code snippets (denoted by `), because gradio already escapes those.
-    """
-    result = []
-    last_end = 0
-    for m in code_regexp.finditer(text):
-        result.append(html.escape(text[last_end : m.start()]))
-        result.append(m.group(0))
-        last_end = m.end()
-    result.append(html.escape(text[last_end:]))
-    return "".join(result)
+    @classmethod
+    def escape_html_except_code(
+        cls,
+        text: str,
+        *,
+        code_fence_style: Literal["backtick", "tilde"],
+    ) -> str:
+        """
+        Escape HTML characters in the given text, except for code blocks (denoted by ```),
+        and inline code snippets (denoted by `), because gradio already escapes those.
+        """
+        result = []
+        last_end = 0
+
+        for m in cls.CODE_FENCE_REGEX_MAP[code_fence_style].finditer(text):
+            result.append(html.escape(text[last_end : m.start()]))
+            result.append(m.group(0))
+            last_end = m.end()
+        result.append(html.escape(text[last_end:]))
+        return "".join(result)
