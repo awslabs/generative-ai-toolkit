@@ -295,7 +295,19 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
     tool_config = attributes.pop("ai.llm.request.tool.config", None)
     inference_config = attributes.pop("ai.llm.request.inference.config", None)
     output = attributes.pop("ai.llm.response.output", None)
-    res = textwrap.dedent(
+    error = attributes.pop("ai.llm.response.error", None)
+    res = ""
+    if error:
+        res += textwrap.dedent(
+            """
+            **Error**
+            {error}
+            """
+        ).format(
+            error=error,
+        )
+
+    res += textwrap.dedent(
         """
         **Inference Config**
         {inference_config}
@@ -344,16 +356,6 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             metrics=metrics,
         )
 
-    error = attributes.pop("ai.llm.response.error", None)
-    if error:
-        res += textwrap.dedent(
-            """
-            **Error**
-            {error}
-            """
-        ).format(
-            error=error,
-        )
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
