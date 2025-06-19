@@ -40,6 +40,8 @@ def chat_ui(
     show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
 ):
 
+    ensure_running_event_loop()
+
     def user_submit(user_input: str):
         return (
             gr.update(
