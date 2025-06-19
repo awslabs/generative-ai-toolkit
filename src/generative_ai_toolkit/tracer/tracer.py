@@ -77,11 +77,11 @@ class Tracer(Protocol):
 
 
 @runtime_checkable
-class PreviewableTracer(Protocol):
+class SnapshotCapableTracer(Protocol):
 
-    preview_enabled: bool
+    snapshot_enabled: bool
 
-    def preview(self, trace: Trace): ...
+    def persist_snapshot(self, trace: Trace): ...
 
 
 @runtime_checkable
@@ -190,7 +190,7 @@ class ContextAwareSpanPersistor:
     span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
     trace: Trace
     persistor: Callable[["Trace"], None]
-    previewer: Callable[["Trace"], None] | None
+    snapshot_handler: Callable[["Trace"], None] | None
     trace_context: TraceContextProvider
     _reset: Callable[[], None]
     parent_span: Trace | None
@@ -206,13 +206,13 @@ class ContextAwareSpanPersistor:
         resource_attributes: Mapping[str, Any] | None = None,
         span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
         persistor: Callable[["Trace"], None],
-        previewer: Callable[["Trace"], None] | None = None,
+        snapshot_handler: Callable[["Trace"], None] | None = None,
         trace_context: TraceContextProvider,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
         self.persistor = persistor
-        self.previewer = previewer
+        self.snapshot_handler = snapshot_handler
         self.trace_context = trace_context
         self.parent_span = parent_span
         self.scope = scope
@@ -229,7 +229,7 @@ class ContextAwareSpanPersistor:
             parent_span=self.parent_span or context.span,
             scope=self.scope or context.scope,
             resource_attributes=self.resource_attributes or context.resource_attributes,
-            share_preview=self.previewer,
+            snapshot_handler=self.snapshot_handler,
         )
         self._reset = self.trace_context.set_context(span=self.trace)
         return self.trace
@@ -247,7 +247,7 @@ class ContextAwareSpanPersistor:
         self.persistor(self.trace)
 
 
-class BaseTracer(Tracer):
+class BaseTracer(Tracer, SnapshotCapableTracer):
 
     trace_context_provider: TraceContextProvider
 
@@ -256,6 +256,7 @@ class BaseTracer(Tracer):
             trace_context_provider or ContextVarTraceContextProvider()
         )
         self.lock = threading.Lock()
+        self.snapshot_enabled = False
 
     @property
     def context(self) -> TraceContext:
@@ -287,9 +288,9 @@ class BaseTracer(Tracer):
             scope=scope,
             resource_attributes=resource_attributes,
             persistor=self.persist,
-            previewer=(
-                self.preview
-                if isinstance(self, PreviewableTracer) and self.preview_enabled
+            snapshot_handler=(
+                self.persist_snapshot
+                if isinstance(self, SnapshotCapableTracer) and self.snapshot_enabled
                 else None
             ),
             trace_context=self,
@@ -309,6 +310,9 @@ class BaseTracer(Tracer):
         raise NotImplementedError(
             f"You're using the {self.__class__.__name__} tracer, that doesn't support persist()."
         )
+
+    def persist_snapshot(self, trace: Trace):
+        pass
 
 
 class NoopTracer(BaseTracer):
@@ -392,10 +396,9 @@ class ChainableTracer(Tracer, Protocol):
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer": ...
 
 
-class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
+class TeeTracer(BaseTracer, ChainableTracer):
 
     _tracers: list[Tracer]
-    preview_enabled = False
 
     def __init__(
         self,
@@ -409,18 +412,18 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         return self._tracers
 
     def add_tracer(self, tracer: Tracer) -> "TeeTracer":
-        if not self.preview_enabled and isinstance(tracer, PreviewableTracer):
-            self.preview_enabled = True
+        if not self.snapshot_enabled and isinstance(tracer, SnapshotCapableTracer):
+            self.snapshot_enabled = True
         self._tracers.append(tracer)
         return self  # allow chaining add_tracer() calls
 
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer":
         self._tracers.remove(tracer)
         for remaining_tracer in self._tracers:
-            if isinstance(remaining_tracer, PreviewableTracer):
+            if isinstance(remaining_tracer, SnapshotCapableTracer):
                 break
             else:
-                self.preview_enabled = False
+                self.snapshot_enabled = False
 
         return self  # allow chaining remove_tracer() calls
 
@@ -428,10 +431,10 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         for tracer in self._tracers:
             tracer.persist(trace)
 
-    def preview(self, trace: Trace):
+    def persist_snapshot(self, trace: Trace):
         for tracer in self._tracers:
-            if isinstance(tracer, PreviewableTracer):
-                tracer.preview(trace)
+            if isinstance(tracer, SnapshotCapableTracer):
+                tracer.persist_snapshot(trace)
 
     def get_traces(
         self,
@@ -445,14 +448,12 @@ class TeeTracer(BaseTracer, ChainableTracer, PreviewableTracer):
         )
 
 
-class IterableTracer(BaseTracer, PreviewableTracer):
+class IterableTracer(BaseTracer):
     """
     Threadsafe tracer that allows you to iterate over incoming traces.
     The iteration can by stopped by signalling `shutdown()`.
     This tracer can e.g. be used for tracing one "turn", i.e. one invocation of converse_stream()
     """
-
-    preview_enabled = True
 
     def __init__(
         self,
@@ -460,6 +461,7 @@ class IterableTracer(BaseTracer, PreviewableTracer):
         trace_context_provider: TraceContextProvider | None = None,
     ):
         super().__init__(trace_context_provider)
+        self.snapshot_enabled = True
         self.queue = Queue(maxsize)
 
     def __enter__(self):
@@ -475,7 +477,7 @@ class IterableTracer(BaseTracer, PreviewableTracer):
     def persist(self, trace: Trace):
         self.queue.put(trace)
 
-    def preview(self, trace: Trace):
+    def persist_snapshot(self, trace: Trace):
         self.queue.put(trace)
 
     def __iter__(self):

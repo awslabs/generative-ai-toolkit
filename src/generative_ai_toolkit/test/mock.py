@@ -44,7 +44,6 @@ if TYPE_CHECKING:
         ConverseStreamOutputTypeDef,
         ConverseStreamRequestTypeDef,
         ConverseStreamResponseTypeDef,
-        MessageUnionTypeDef,
     )
 
 
@@ -62,7 +61,13 @@ class MockBedrockConverse:
         self,
         session: boto3.session.Session | None = None,
         response_generator: (
-            Callable[["MockBedrockConverse", Sequence["MessageUnionTypeDef"]], None]
+            Callable[
+                [
+                    "MockBedrockConverse",
+                    "ConverseRequestTypeDef | ConverseStreamRequestTypeDef",
+                ],
+                None,
+            ]
             | None
         ) = None,
         stream_delay_between_tokens: int | float | None = None,
@@ -87,9 +92,7 @@ class MockBedrockConverse:
         self, **kwargs: Unpack["ConverseRequestTypeDef"]
     ) -> "ConverseResponseTypeDef":
         if len(self.mock_responses) == 0 and self.response_generator:
-            messages = kwargs.get("messages")
-            if messages:
-                self.response_generator(self, messages)
+            self.response_generator(self, kwargs)
         if len(self.mock_responses) == 0:
             raise RuntimeError(
                 f"Exhausted all mock responses, but need to reply to message: {kwargs.get('messages', [])[-1]}"
@@ -101,9 +104,7 @@ class MockBedrockConverse:
 
     def _converse_stream(self, **kwargs: Unpack["ConverseStreamRequestTypeDef"]):
         if len(self.mock_responses) == 0 and self.response_generator:
-            messages = kwargs.get("messages")
-            if messages:
-                self.response_generator(self, messages)
+            self.response_generator(self, kwargs)
         if len(self.mock_responses) == 0:
             raise RuntimeError(
                 f"Exhausted all mock responses, but need to reply to message: {kwargs.get('messages', [])[-1]}"

@@ -84,7 +84,7 @@ class Trace:
         span_status: Literal["UNSET", "OK", "ERROR"] = "UNSET",
         resource_attributes: Mapping[str, Any] | None = None,
         scope: "TraceScope | None" = None,
-        share_preview: Callable[["Trace"], None] | None = None,
+        snapshot_handler: Callable[["Trace"], None] | None = None,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
@@ -110,7 +110,7 @@ class Trace:
             else TraceScope("generative-ai-toolkit", "current")
         )
         self.span_status = span_status
-        self._share_preview = share_preview
+        self._snapshot_handler = snapshot_handler
 
     def clone(self):
         """
@@ -146,9 +146,9 @@ class Trace:
         )
         return copied
 
-    def share_preview(self):
-        if self._share_preview:
-            self._share_preview(self.clone())
+    def emit_snapshot(self):
+        if self._snapshot_handler:
+            self._snapshot_handler(self.clone())
 
     @property
     def attributes(self) -> Mapping[str, Any]:

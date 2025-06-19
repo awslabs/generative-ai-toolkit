@@ -646,7 +646,7 @@ class BedrockConverseAgent(Agent):
             trace.add_attribute("ai.tool.name", tool_name)
             trace.add_attribute("ai.tool.use.id", tool_use["toolUseId"])
             trace.add_attribute("ai.tool.input", tool_use["input"])
-            trace.share_preview()
+            trace.emit_snapshot()
 
             tool_error = None
             tool_response_json: Any = None
@@ -733,7 +733,7 @@ class BedrockConverseAgent(Agent):
             "ai.auth.context", self.auth_context, inheritable=True
         )
         current_trace.add_attribute("ai.user.input", user_input)
-        current_trace.share_preview()
+        current_trace.emit_snapshot()
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -846,7 +846,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.request.performance.config",
                         request["performanceConfig"],
                     )
-                trace.share_preview()
+                trace.emit_snapshot()
 
                 try:
                     response = self.bedrock_client.converse(**request)
@@ -863,7 +863,7 @@ class BedrockConverseAgent(Agent):
                             "ai.llm.response.performance.config",
                             response["performanceConfig"],
                         )
-                    trace.share_preview()
+                    trace.emit_snapshot()
 
                 except botocore.exceptions.ClientError as err:
                     trace.add_attribute("ai.llm.response.error", err.response)
@@ -1023,7 +1023,7 @@ class BedrockConverseAgent(Agent):
             "ai.auth.context", self.auth_context, inheritable=True
         )
         current_trace.add_attribute("ai.user.input", user_input)
-        current_trace.share_preview()
+        current_trace.emit_snapshot()
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -1135,7 +1135,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.request.performance.config",
                         request["performanceConfig"],
                     )
-                trace.share_preview()
+                trace.emit_snapshot()
 
                 try:
                     response = self.bedrock_client.converse_stream(**request)
@@ -1176,7 +1176,7 @@ class BedrockConverseAgent(Agent):
                             current_trace.add_attribute(
                                 "ai.agent.response", concatenated
                             )
-                            current_trace.share_preview()
+                            current_trace.emit_snapshot()
                             yield text
 
                         if self.include_reasoning_text_within_thinking_tags:
@@ -1191,7 +1191,7 @@ class BedrockConverseAgent(Agent):
                                         current_trace.add_attribute(
                                             "ai.agent.response", concatenated
                                         )
-                                        current_trace.share_preview()
+                                        current_trace.emit_snapshot()
                                         is_reasoning = True
                                         yield "<thinking>\n"
                                     texts[-1] = reasoning_text
@@ -1199,7 +1199,7 @@ class BedrockConverseAgent(Agent):
                                     current_trace.add_attribute(
                                         "ai.agent.response", concatenated
                                     )
-                                    current_trace.share_preview()
+                                    current_trace.emit_snapshot()
                                     yield reasoning_text
                                 reasoning_signature = reasoning_content.get("signature")
                                 if reasoning_signature:
@@ -1208,7 +1208,7 @@ class BedrockConverseAgent(Agent):
                                         current_trace.add_attribute(
                                             "ai.agent.response", concatenated
                                         )
-                                        current_trace.share_preview()
+                                        current_trace.emit_snapshot()
                                         is_reasoning = False
                                         yield "\n</thinking>\n\n"
 
@@ -1225,7 +1225,7 @@ class BedrockConverseAgent(Agent):
                         stop_reason = stream_event["messageStop"]["stopReason"]
                         concatenated += "\n"
                         current_trace.add_attribute("ai.agent.response", concatenated)
-                        current_trace.share_preview()
+                        current_trace.emit_snapshot()
                         yield "\n"
 
                     elif "metadata" in stream_event:
@@ -1249,7 +1249,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.response.performance.config",
                         metadata["performanceConfig"],
                     )
-                trace.share_preview()
+                trace.emit_snapshot()
 
             self._add_message(message)
 

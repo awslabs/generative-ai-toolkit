@@ -76,8 +76,9 @@ def chat_ui(
     ) as demo:
 
         show_traces_state = gr.State(value=show_traces)
-        traces_state = gr.State(value=agent.traces)
+        traces_state = gr.State(value=[])
         stop_event = gr.State(value=None)
+        last_user_input = gr.State("")
 
         with gr.Row(visible=show_traces_drop_down):
             gr.Markdown("")  # functions as spacer
@@ -94,8 +95,6 @@ def chat_ui(
                 scale=0,
                 min_width=250,
             )
-
-        last_user_input = gr.State("")
 
         chatbot = gr.Chatbot(
             type="messages",
@@ -985,8 +984,8 @@ def ensure_running_event_loop():
 
 class EscapeHtml:
 
-    CODE_REGEXP_BACKTICK = re.compile(r"^```[\s\S]*?```|`[^`]*`", re.MULTILINE)
-    CODE_REGEXP_TILDE = re.compile(r"^~~~[\s\S]*?~~~|~[^~]*~", re.MULTILINE)
+    CODE_REGEXP_BACKTICK = re.compile(r"^```[\s\S]*?^```|`[^`]*`", re.MULTILINE)
+    CODE_REGEXP_TILDE = re.compile(r"^~~~[\s\S]*?^~~~|~[^~]*~", re.MULTILINE)
     CODE_FENCE_REGEX_MAP = {
         "backtick": CODE_REGEXP_BACKTICK,
         "tilde": CODE_REGEXP_TILDE,
