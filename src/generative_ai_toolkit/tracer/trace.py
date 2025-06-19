@@ -114,7 +114,7 @@ class Trace:
 
     def clone(self):
         """
-        Return a stand-alone clone of the trace.
+        Return a stand-alone and flattened clone of the trace.
 
         To avoid having to clone the entire chain of parent spans:
         - The clone will only include a pointer to its direct parent

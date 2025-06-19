@@ -987,7 +987,7 @@ class BedrockConverseAgent(Agent):
                 ctx = contextvars.copy_context()
                 thread = Thread(
                     target=ctx.run,
-                    args=[self._generate_traces, gen, tracer],
+                    args=[self._consume_traced_iterable, gen, tracer],
                     daemon=True,
                     name="converse_stream",
                 )
@@ -1400,9 +1400,9 @@ class BedrockConverseAgent(Agent):
         }
 
     @staticmethod
-    def _generate_traces(gen: Iterable[str], tracer: IterableTracer):
+    def _consume_traced_iterable(iterable: Iterable[str], tracer: IterableTracer):
         try:
-            for _ in gen:
+            for _ in iterable:
                 pass
         finally:
             tracer.shutdown()
