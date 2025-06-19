@@ -1480,6 +1480,30 @@ This command runs a local web server (at http://localhost:7860) where you can in
 results.ui.close()
 ```
 
+#### Chat UI for Interactive Agent Conversations
+
+The Generative AI Toolkit also provides an interactive interface for chatting with your agent:
+
+```python
+from generative_ai_toolkit.ui import chat_ui
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    system_prompt="You are a helpful assistant"
+)
+
+# Register any tools as needed
+agent.register_tool(my_tool_function)
+
+# Create and launch the chat UI
+demo = chat_ui(agent)
+demo.launch(inbrowser=True)
+```
+
+This interactive UI is meant for development and testing phases, to quickly iterate on your agent's capabilities and see how it responds to different user inputs.
+
+<img src="./assets/images/ui-chat.png" alt="UI Chat Interface Screenshot" title="UI Chat Interface" width="1200"/>
+
 ### 2.10 Mocking and Testing
 
 As with all software, you'll want to test your agent. You can use above mentioned [Cases](#25-repeatable-cases) for evaluating your agent in an end-to-end testing style. You may also want to create integration tests and unit tests, e.g. to target specific code paths in isolation. For such tests you can use the following tools from the Generative AI Toolkit:
