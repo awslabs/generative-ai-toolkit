@@ -980,24 +980,27 @@ class BedrockConverseAgent(Agent):
             user_input=user_input, tools=tools, stop_event=stop_event
         )
         if stream == "text":
-            return gen
-        with IterableTracer() as tracer:
-            self._tracer.add_tracer(tracer)
-            try:
-                ctx = contextvars.copy_context()
-                thread = Thread(
-                    target=ctx.run,
-                    args=[self._consume_traced_iterable, gen, tracer],
-                    daemon=True,
-                    name="converse_stream",
-                )
-                thread.start()
+            yield from gen
+        elif stream == "traces":
+            with IterableTracer() as tracer:
+                self._tracer.add_tracer(tracer)
                 try:
-                    yield from tracer
+                    ctx = contextvars.copy_context()
+                    thread = Thread(
+                        target=ctx.run,
+                        args=[self._consume_traced_iterable, gen, tracer],
+                        daemon=True,
+                        name="converse_stream",
+                    )
+                    thread.start()
+                    try:
+                        yield from tracer
+                    finally:
+                        thread.join()
                 finally:
-                    thread.join()
-            finally:
-                self._tracer.remove_tracer(tracer)
+                    self._tracer.remove_tracer(tracer)
+        else:
+            raise ValueError(f"stream must be 'text' or 'traces', but got {stream}")
 
     @traced("converse-stream", span_kind="SERVER")
     def _converse_stream(

@@ -1670,6 +1670,62 @@ Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam
 Expect(agent.traces).agent_text_response.to_include("20")
 ```
 
+#### Dynamic Response Generation
+
+In addition to preparing responses ahead of time, the `MockBedrockConverse` class also supports dynamically generating responses on-the-fly using the `response_generator` parameter:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+# Create a mock instance
+mock = MockBedrockConverse()
+
+# Define a function that will generate responses based on the request
+def response_generator(mock_instance, request):
+    # Extract user message from the request
+    if "messages" in request and request["messages"]:
+        content = user_message = request["messages"][-1]["content"][0]
+        if "text" in content:
+            user_message = content["text"]
+            if "weather" in user_message.lower():
+                mock_instance.add_output(
+                    text_output=["Let me check the weather for you."],
+                    tool_use_output=[{"name": "weather_tool", "input": {"city": "Seattle"}}]
+                )
+            else:
+                mock_instance.add_output(text_output=["I'm not sure how to respond to that"])
+        elif "toolResult" in content:
+            tool_result = content["toolResult"]["content"][0]["json"]
+            mock_instance.add_output(text_output=tool_result["toolResponse"])
+
+mock.response_generator = response_generator
+
+def weather_tool(city: str) -> str:
+    """
+    Get the weather forecast for a city
+
+    Parameters
+    ---
+    city : str
+      The city
+    """
+    return f"The weather in {city} is sunny."
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    session=mock.session()
+)
+agent.register_tool(weather_tool)
+
+# Now when we converse with the agent, the response_generator
+# will dynamically create responses based on the input
+response = agent.converse("What's the weather like in Seattle?")
+print(response) # "The weather in Seattle is sunny."
+```
+
+The response generator is only invoked when there are no prepared responses available (i.e. those added with `mock.add_output()`). If there are prepared responses available, those will be used first.
+
 #### Usage with Pytest
 
 Here's a Pytest example:
