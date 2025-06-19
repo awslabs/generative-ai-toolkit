@@ -95,7 +95,7 @@ F = TypeVar("F", bound=Callable)
 
 
 @overload
-def traced(arg: F) -> F: ...
+def traced[F: Callable](arg: F) -> F: ...
 
 
 @overload
@@ -108,7 +108,7 @@ def traced(
 ) -> Callable[[F], F]: ...
 
 
-def traced(
+def traced[F: Callable](
     arg: F | str,
     *,
     scope: TraceScope | None = None,
@@ -132,7 +132,7 @@ def traced(
     return decorator
 
 
-def _create_decorator(
+def _create_decorator[F: Callable](
     func: F,
     span_name: str,
     *,

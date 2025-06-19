@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from IPython.core.getipython import get_ipython
+
 
 def is_notebook():
     try:
-        from IPython.core.getipython import get_ipython
 
         ipy = get_ipython()
         if not ipy or not hasattr(ipy, "config") or "IPKernelApp" not in ipy.config:
