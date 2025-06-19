@@ -634,6 +634,21 @@ Which would print e.g.:
 
 ```
 
+##### Streaming traces
+
+With `converse_stream()` you can iterate over traces in real-time, as they are produced by the agent and its tools:
+
+```python
+for trace in agent.converse_stream("What's the capital of France?", stream="traces"):
+    print(trace)
+```
+
+This yields `Trace` objects as they are generated during the conversation, allowing you to monitor and analyze the agent's behavior as it runs. Each trace contains information about a specific operation (such as LLM invocation, tool usage, etc.) with all relevant attributes like timestamps, inputs, outputs, and more.
+
+The stream includes both complete traces and trace snapshots. Snapshots represent intermediate traces that are still in progress and can be identified by checking if `trace.ended_at` is `None`.
+
+Streaming traces can be particularly useful for user-facing applications that want to display detailed progress incrementally (like the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations)).
+
 ##### Web UI
 
 You can view the traces for a conversation using the Generative AI Toolkit Web UI:
@@ -655,6 +670,8 @@ Stop the Web UI as follows:
 ```python
 demo.close()
 ```
+
+Note that you can also use the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations), which also shows traces.
 
 ##### DynamoDB example
 
@@ -1480,7 +1497,7 @@ This command runs a local web server (at http://localhost:7860) where you can in
 results.ui.close()
 ```
 
-#### Chat UI for Interactive Agent Conversations
+#### Chat UI for interactive agent conversations
 
 The Generative AI Toolkit also provides an interactive interface for chatting with your agent:
 
