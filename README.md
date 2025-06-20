@@ -634,6 +634,21 @@ Which would print e.g.:
 
 ```
 
+##### Streaming traces
+
+With `converse_stream()` you can iterate over traces in real-time, as they are produced by the agent and its tools. For this, set parameter `stream` to `traces`:
+
+```python
+for trace in agent.converse_stream("What's the capital of France?", stream="traces"):
+    print(trace)
+```
+
+In `traces` mode, `converse_stream()` yields `Trace` objects as they are generated during the conversation, allowing you to monitor and analyze the agent's behavior as it runs. Each trace contains information about a specific operation (such as LLM invocation, tool usage, etc.) with all relevant attributes like timestamps, inputs, outputs, and more.
+
+The stream includes both complete traces and trace snapshots. Snapshots represent intermediate traces that are still in progress and can be identified by checking if `trace.ended_at` is `None`.
+
+Streaming traces can be particularly useful for user-facing applications that want to display detailed progress incrementally (like the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations)).
+
 ##### Web UI
 
 You can view the traces for a conversation using the Generative AI Toolkit Web UI:
@@ -655,6 +670,8 @@ Stop the Web UI as follows:
 ```python
 demo.close()
 ```
+
+Note that you can also use the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations), which also shows traces.
 
 ##### DynamoDB example
 
@@ -1480,6 +1497,30 @@ This command runs a local web server (at http://localhost:7860) where you can in
 results.ui.close()
 ```
 
+#### Chat UI for interactive agent conversations
+
+The Generative AI Toolkit also provides an interactive interface for chatting with your agent:
+
+```python
+from generative_ai_toolkit.ui import chat_ui
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    system_prompt="You are a helpful assistant"
+)
+
+# Register any tools as needed
+agent.register_tool(my_tool_function)
+
+# Create and launch the chat UI
+demo = chat_ui(agent)
+demo.launch(inbrowser=True)
+```
+
+This interactive UI is meant for development and testing phases, to quickly iterate on your agent's capabilities and see how it responds to different user inputs.
+
+<img src="./assets/images/ui-chat.png" alt="UI Chat Interface Screenshot" title="UI Chat Interface" width="1200"/>
+
 ### 2.10 Mocking and Testing
 
 As with all software, you'll want to test your agent. You can use above mentioned [Cases](#25-repeatable-cases) for evaluating your agent in an end-to-end testing style. You may also want to create integration tests and unit tests, e.g. to target specific code paths in isolation. For such tests you can use the following tools from the Generative AI Toolkit:
@@ -1629,6 +1670,62 @@ Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam
 Expect(agent.traces).agent_text_response.to_include("20")
 ```
 
+#### Dynamic Response Generation
+
+In addition to preparing responses ahead of time, the `MockBedrockConverse` class also supports dynamically generating responses on-the-fly using the `response_generator` parameter:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+# Create a mock instance
+mock = MockBedrockConverse()
+
+# Define a function that will generate responses based on the request
+def response_generator(mock_instance, request):
+    # Extract user message from the request
+    if "messages" in request and request["messages"]:
+        content = user_message = request["messages"][-1]["content"][0]
+        if "text" in content:
+            user_message = content["text"]
+            if "weather" in user_message.lower():
+                mock_instance.add_output(
+                    text_output=["Let me check the weather for you."],
+                    tool_use_output=[{"name": "weather_tool", "input": {"city": "Seattle"}}]
+                )
+            else:
+                mock_instance.add_output(text_output=["I'm not sure how to respond to that"])
+        elif "toolResult" in content:
+            tool_result = content["toolResult"]["content"][0]["json"]
+            mock_instance.add_output(text_output=tool_result["toolResponse"])
+
+mock.response_generator = response_generator
+
+def weather_tool(city: str) -> str:
+    """
+    Get the weather forecast for a city
+
+    Parameters
+    ---
+    city : str
+      The city
+    """
+    return f"The weather in {city} is sunny."
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    session=mock.session()
+)
+agent.register_tool(weather_tool)
+
+# Now when we converse with the agent, the response_generator
+# will dynamically create responses based on the input
+response = agent.converse("What's the weather like in Seattle?")
+print(response) # "The weather in Seattle is sunny."
+```
+
+The response generator is only invoked when there are no prepared responses available (i.e. those added with `mock.add_output()`). If there are prepared responses available, those will be used first.
+
 #### Usage with Pytest
 
 Here's a Pytest example:
@@ -1738,7 +1835,7 @@ Note: only local MCP servers (that communicate over `stdio`) are supported curre
 
 #### Chat loop
 
-To chat with your MCP client, call `chat()`. This will start a REPL chat:
+To chat with your MCP client, call `chat()`. This will start the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations) with your MCP client:
 
 ```python
 mcp_client.chat()
@@ -1747,11 +1844,7 @@ mcp_client.chat()
 ```
 MCP server configuration loaded: mcp.json
 
-MCP client ready. Type /q to quit. Type /t to list the available tools.
-
-You: /t
-
-Listing available tools:
+Registered tools:
 
   current_weather
   _______________
@@ -1760,18 +1853,20 @@ Listing available tools:
 
     This tool is already aware of the user's location, so you don't need to provide it.
 
-You: How's the weather?
-Assistant: It's currently sunny and 27 degrees Celsius outside.
+Running MCP client at http://127.0.0.1:7860/
 
-You: /q
-Assistant: Goodbye!
+Press CTRL-C to quit.
 ```
+
+The browser will open automatically and you can start chatting with the MCP client.
+
+##### Customize chat loop
 
 You can customize the chat loop by providing your own loop function:
 
 ```python
-def my_chat_loop(agent: Agent):
-    while True:
+def my_chat_loop(agent: Agent, stop_event: Event):
+    while not stop_event.is_set():
         user_input = input("Awesome user: ")
         if not user_input:
             break

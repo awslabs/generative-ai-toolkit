@@ -647,35 +647,40 @@ class Expect:
 class _StringAssertor:
 
     _at: int
-    base_value: str
-    base_values: Sequence[str]
+    _base_value: str
+    _base_values: Sequence[str]
 
-    def __init__(self, base_values: str | Sequence[str], at=-1) -> None:
-        self.base_values = [base_values] if type(base_values) is str else base_values
+    def __init__(self, _base_values: str | Sequence[str], at=-1) -> None:
+        self._base_values = (
+            [_base_values] if type(_base_values) is str else _base_values
+        )
         self._at = at
-        self.base_value = self.base_values[at] if self.base_values else ""
+        self._base_value = self._base_values[at] if self._base_values else ""
 
     def at(self, index: int) -> "_StringAssertor":
-        return _StringAssertor(self.base_values, index)
+        return _StringAssertor(self._base_values, index)
 
     def to_equal(self, value: str) -> None:
-        assert self.base_value == value, f"'{self.base_value}' != '{value}'"
+        assert self._base_value == value, f"'{self._base_value}' != '{value}'"
 
     def to_include(self, value: str) -> None:
         assert (
-            value in self.base_value
-        ), f"'{self.base_value}' does not include '{value}'"
+            value in self._base_value
+        ), f"'{self._base_value}' does not include '{value}'"
 
     def to_not_include(self, value: str) -> None:
-        assert value not in self.base_value, f"'{self.base_value}' includes '{value}'"
+        assert value not in self._base_value, f"'{self._base_value}' includes '{value}'"
 
     def to_have_length(self, length: int | None = None):
         expected_txt = length if length is not None else "of at least 1"
         assert (
-            len(self.base_value) == length
+            len(self._base_value) == length
             if length is not None
-            else len(self.base_value) > 0
-        ), f"Expected '{self.base_value}' to have length {expected_txt}, but it has length {len(self.base_value)}"
+            else len(self._base_value) > 0
+        ), f"Expected '{self._base_value}' to have length {expected_txt}, but it has length {len(self._base_value)}"
+
+    def with_fn(self, fn: Callable[[str], str]) -> "_StringAssertor":
+        return _StringAssertor(fn(self._base_value))
 
 
 class _ToolAssertor:

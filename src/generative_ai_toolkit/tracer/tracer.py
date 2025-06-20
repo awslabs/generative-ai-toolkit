@@ -14,12 +14,14 @@
 
 import inspect
 import sys
+import threading
 import traceback
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from functools import wraps
+from queue import Queue, ShutDown
 from typing import (
     Any,
     Literal,
@@ -71,6 +73,16 @@ class Tracer(Protocol):
         attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]: ...
 
+    def persist(self, trace: Trace): ...
+
+
+@runtime_checkable
+class SnapshotCapableTracer(Protocol):
+
+    snapshot_enabled: bool
+
+    def persist_snapshot(self, trace: Trace): ...
+
 
 @runtime_checkable
 class HasTracer(Protocol):
@@ -83,7 +95,7 @@ F = TypeVar("F", bound=Callable)
 
 
 @overload
-def traced(arg: F) -> F: ...
+def traced[F: Callable](arg: F) -> F: ...
 
 
 @overload
@@ -96,7 +108,7 @@ def traced(
 ) -> Callable[[F], F]: ...
 
 
-def traced(
+def traced[F: Callable](
     arg: F | str,
     *,
     scope: TraceScope | None = None,
@@ -120,7 +132,7 @@ def traced(
     return decorator
 
 
-def _create_decorator(
+def _create_decorator[F: Callable](
     func: F,
     span_name: str,
     *,
@@ -178,6 +190,7 @@ class ContextAwareSpanPersistor:
     span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
     trace: Trace
     persistor: Callable[["Trace"], None]
+    snapshot_handler: Callable[["Trace"], None] | None
     trace_context: TraceContextProvider
     _reset: Callable[[], None]
     parent_span: Trace | None
@@ -193,11 +206,13 @@ class ContextAwareSpanPersistor:
         resource_attributes: Mapping[str, Any] | None = None,
         span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
         persistor: Callable[["Trace"], None],
+        snapshot_handler: Callable[["Trace"], None] | None = None,
         trace_context: TraceContextProvider,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
         self.persistor = persistor
+        self.snapshot_handler = snapshot_handler
         self.trace_context = trace_context
         self.parent_span = parent_span
         self.scope = scope
@@ -214,6 +229,7 @@ class ContextAwareSpanPersistor:
             parent_span=self.parent_span or context.span,
             scope=self.scope or context.scope,
             resource_attributes=self.resource_attributes or context.resource_attributes,
+            snapshot_handler=self.snapshot_handler,
         )
         self._reset = self.trace_context.set_context(span=self.trace)
         return self.trace
@@ -231,7 +247,7 @@ class ContextAwareSpanPersistor:
         self.persistor(self.trace)
 
 
-class BaseTracer(Tracer):
+class BaseTracer(Tracer, SnapshotCapableTracer):
 
     trace_context_provider: TraceContextProvider
 
@@ -239,6 +255,8 @@ class BaseTracer(Tracer):
         self.trace_context_provider = (
             trace_context_provider or ContextVarTraceContextProvider()
         )
+        self.lock = threading.Lock()
+        self.snapshot_enabled = False
 
     @property
     def context(self) -> TraceContext:
@@ -270,6 +288,11 @@ class BaseTracer(Tracer):
             scope=scope,
             resource_attributes=resource_attributes,
             persistor=self.persist,
+            snapshot_handler=(
+                self.persist_snapshot
+                if isinstance(self, SnapshotCapableTracer) and self.snapshot_enabled
+                else None
+            ),
             trace_context=self,
         )
 
@@ -287,6 +310,9 @@ class BaseTracer(Tracer):
         raise NotImplementedError(
             f"You're using the {self.__class__.__name__} tracer, that doesn't support persist()."
         )
+
+    def persist_snapshot(self, trace: Trace):
+        pass
 
 
 class NoopTracer(BaseTracer):
@@ -322,13 +348,15 @@ class StructuredLogsTracer(StreamTracer):
         self.logger = SimpleLogger("TraceLogger", stream=self._stream)
 
     def persist(self, trace: Trace):
-        self.logger.info("Trace", trace=trace.as_dict())
+        with self.lock:
+            self.logger.info("Trace", trace=trace.as_dict())
 
 
 class HumanReadableTracer(StreamTracer):
 
     def persist(self, trace: Trace):
-        print(trace.as_human_readable(), file=self._stream)
+        with self.lock:
+            print(trace.as_human_readable(), file=self._stream)
 
 
 class InMemoryTracer(BaseTracer):
@@ -361,9 +389,16 @@ class InMemoryTracer(BaseTracer):
         )
 
 
-class TeeTracer(BaseTracer):
+@runtime_checkable
+class ChainableTracer(Tracer, Protocol):
+    def add_tracer(self, tracer: Tracer) -> "TeeTracer": ...
 
-    _tracers: list[BaseTracer]
+    def remove_tracer(self, tracer: Tracer) -> "TeeTracer": ...
+
+
+class TeeTracer(BaseTracer, ChainableTracer):
+
+    _tracers: list[Tracer]
 
     def __init__(
         self,
@@ -372,13 +407,34 @@ class TeeTracer(BaseTracer):
         super().__init__(trace_context_provider=trace_context_provider)
         self._tracers = []
 
-    def add_tracer(self, tracer: BaseTracer) -> "TeeTracer":
+    @property
+    def tracers(self) -> list[Tracer]:
+        return self._tracers
+
+    def add_tracer(self, tracer: Tracer) -> "TeeTracer":
+        if not self.snapshot_enabled and isinstance(tracer, SnapshotCapableTracer):
+            self.snapshot_enabled = True
         self._tracers.append(tracer)
         return self  # allow chaining add_tracer() calls
+
+    def remove_tracer(self, tracer: Tracer) -> "TeeTracer":
+        self._tracers.remove(tracer)
+        for remaining_tracer in self._tracers:
+            if isinstance(remaining_tracer, SnapshotCapableTracer):
+                break
+            else:
+                self.snapshot_enabled = False
+
+        return self  # allow chaining remove_tracer() calls
 
     def persist(self, trace: Trace):
         for tracer in self._tracers:
             tracer.persist(trace)
+
+    def persist_snapshot(self, trace: Trace):
+        for tracer in self._tracers:
+            if isinstance(tracer, SnapshotCapableTracer):
+                tracer.persist_snapshot(trace)
 
     def get_traces(
         self,
@@ -390,3 +446,43 @@ class TeeTracer(BaseTracer):
         return self._tracers[0].get_traces(
             trace_id=trace_id, attribute_filter=attribute_filter
         )
+
+
+class IterableTracer(BaseTracer):
+    """
+    Threadsafe tracer that allows you to iterate over incoming traces.
+    The iteration can by stopped by signalling `shutdown()`.
+    This tracer can e.g. be used for tracing one "turn", i.e. one invocation of converse_stream()
+    """
+
+    def __init__(
+        self,
+        maxsize: int = -1,
+        trace_context_provider: TraceContextProvider | None = None,
+    ):
+        super().__init__(trace_context_provider)
+        self.snapshot_enabled = True
+        self.queue = Queue(maxsize)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self.queue.is_shutdown:
+            self.queue.shutdown()
+
+    def shutdown(self):
+        self.queue.shutdown()
+
+    def persist(self, trace: Trace):
+        self.queue.put(trace)
+
+    def persist_snapshot(self, trace: Trace):
+        self.queue.put(trace)
+
+    def __iter__(self):
+        while True:
+            try:
+                yield self.queue.get()
+            except ShutDown:
+                break

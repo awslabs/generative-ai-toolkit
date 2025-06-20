@@ -15,16 +15,20 @@
 import contextvars
 import json
 import re
+import sys
+import traceback
 import weakref
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
+from threading import Event, Thread
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
     Unpack,
+    overload,
     runtime_checkable,
 )
 
@@ -42,7 +46,15 @@ from generative_ai_toolkit.conversation_history import (
     ConversationHistory,
     InMemoryConversationHistory,
 )
-from generative_ai_toolkit.tracer import InMemoryTracer, Trace, Tracer, traced
+from generative_ai_toolkit.tracer import (
+    ChainableTracer,
+    InMemoryTracer,
+    IterableTracer,
+    TeeTracer,
+    Trace,
+    Tracer,
+    traced,
+)
 from generative_ai_toolkit.tracer.context import (
     TraceContext,
     TraceContextUpdate,
@@ -177,7 +189,12 @@ class Agent(Tool, Protocol):
         """
         ...
 
-    def converse(self, user_input: str, tools: Sequence[Tool] | None = None) -> str:
+    def converse(
+        self,
+        user_input: str,
+        tools: Sequence[Tool] | None = None,
+        stop_event: Event | None = None,
+    ) -> str:
         """
         Start or continue a conversation with the agent and return the agent's response as string.
 
@@ -187,13 +204,43 @@ class Agent(Tool, Protocol):
         """
         ...
 
+    @overload
     def converse_stream(
-        self, user_input: str, tools: Sequence[Tool] | None = None
+        self,
+        user_input: str,
+        stream: Literal["text"] = "text",
+        tools: Sequence[Tool] | None = None,
+        stop_event: Event | None = None,
     ) -> Iterable[str]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Response fragments (text chunks) are yielded as they are produced.
+
+        The caller must consume this iterable fully for the agent to progress.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"],
+        tools: Sequence[Tool] | None = None,
+        stop_event: Event | None = None,
+    ) -> Iterable[Trace]:
+        """
+        Start or continue a conversation with the agent.
+
+        Traces are yielded as they are produced by the agent and its tools.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -222,7 +269,7 @@ class BedrockConverseAgent(Agent):
     _system_prompt: str | None
     _tools: dict[str, Tool]
     _conversation_history: ConversationHistory
-    _tracer: Tracer
+    _tracer: ChainableTracer
 
     # class attribute to track the tracer and conversation history instances used,
     # to prevent accidental double usage, see below.
@@ -299,7 +346,7 @@ class BedrockConverseAgent(Agent):
         performance_config : Literal["standard", "optimized"] | None, optional
             To use a latency-optimized version of the model, set to optimized
         tracer : Tracer | Callable[..., Tracer] | None, optional
-            Tracer for monitoring agent behavior, by default InMemoryTracer
+            Tracer for monitoring agent behavior, by default InMemoryTracer (wrapped in TeeTracer)
         session : boto3.session.Session | None, optional
             AWS session for Bedrock API calls, by default None (use default session)
         bedrock_client : BedrockRuntimeClient | None, optional
@@ -349,7 +396,7 @@ class BedrockConverseAgent(Agent):
             self._conversation_history = conversation_history
             weakref.finalize(self, self._prune_instances_used)
         if not tracer:
-            self._tracer = InMemoryTracer(memory_size=50)
+            self._tracer = TeeTracer().add_tracer(InMemoryTracer(memory_size=50))
         else:
             if callable(tracer):
                 tracer = tracer()
@@ -361,7 +408,10 @@ class BedrockConverseAgent(Agent):
                 )
             else:
                 self._instances_used.add(ref)
-            self._tracer = tracer
+            if isinstance(tracer, ChainableTracer):
+                self._tracer = tracer
+            else:
+                self._tracer = TeeTracer().add_tracer(tracer)
             weakref.finalize(self, self._prune_instances_used)
         resource_attributes = self.tracer.context.resource_attributes
         if "service.name" not in resource_attributes:
@@ -596,6 +646,7 @@ class BedrockConverseAgent(Agent):
             trace.add_attribute("ai.tool.name", tool_name)
             trace.add_attribute("ai.tool.use.id", tool_use["toolUseId"])
             trace.add_attribute("ai.tool.input", tool_use["input"])
+            trace.emit_snapshot()
 
             tool_error = None
             tool_response_json: Any = None
@@ -619,6 +670,10 @@ class BedrockConverseAgent(Agent):
             except Exception as err:
                 tool_error = err
                 trace.add_attribute("ai.tool.error", err)
+                trace.add_attribute(
+                    "ai.tool.error.traceback",
+                    "".join(traceback.format_exception(*sys.exc_info())),
+                )
 
             return {
                 "toolUseId": tool_use["toolUseId"],
@@ -642,7 +697,10 @@ class BedrockConverseAgent(Agent):
 
     @traced("converse", span_kind="SERVER")
     def converse(
-        self, user_input: str, tools: Sequence[Callable | Tool] | None = None
+        self,
+        user_input: str,
+        tools: Sequence[Callable | Tool] | None = None,
+        stop_event: Event | None = None,
     ) -> str:
         """
         Start or continue a conversation with the agent and return the agent's response as string.
@@ -654,10 +712,17 @@ class BedrockConverseAgent(Agent):
 
         # If the current instance has an override for converse_stream, use that one instead
         if (
-            type(self).converse is BedrockConverseAgent.converse
-            and type(self).converse_stream is not BedrockConverseAgent.converse_stream
+            type(self) is not BedrockConverseAgent
+            and type(self).converse is BedrockConverseAgent.converse
+            and (
+                type(self).converse_stream is not BedrockConverseAgent.converse_stream
+                or type(self)._converse_stream
+                is not BedrockConverseAgent._converse_stream
+            )
         ):
-            return "".join(self.converse_stream(user_input, tools=tools))
+            return "".join(
+                self.converse_stream(user_input, tools=tools, stop_event=stop_event)
+            )
 
         current_trace = self._tracer.current_trace
         current_trace.add_attribute("ai.trace.type", "converse")
@@ -668,6 +733,7 @@ class BedrockConverseAgent(Agent):
             "ai.auth.context", self.auth_context, inheritable=True
         )
         current_trace.add_attribute("ai.user.input", user_input)
+        current_trace.emit_snapshot()
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -727,6 +793,11 @@ class BedrockConverseAgent(Agent):
 
         texts: list[str] = []
         for _ in range(self.max_converse_iterations):
+            if stop_event and stop_event.is_set():
+                current_trace.add_attribute("ai.conversation.aborted", True)
+                concatenated = "\n".join(texts)
+                current_trace.add_attribute("ai.agent.response", concatenated)
+                return concatenated
             with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
                 model_id = request["modelId"]
                 trace.add_attribute(
@@ -775,6 +846,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.request.performance.config",
                         request["performanceConfig"],
                     )
+                trace.emit_snapshot()
 
                 try:
                     response = self.bedrock_client.converse(**request)
@@ -791,6 +863,7 @@ class BedrockConverseAgent(Agent):
                             "ai.llm.response.performance.config",
                             response["performanceConfig"],
                         )
+                    trace.emit_snapshot()
 
                 except botocore.exceptions.ClientError as err:
                     trace.add_attribute("ai.llm.response.error", err.response)
@@ -843,7 +916,6 @@ class BedrockConverseAgent(Agent):
                     "content_filtered",
                 ):
                     concatenated = "\n".join(texts)
-                    texts = []
                     current_trace.add_attribute("ai.agent.response", concatenated)
                     return concatenated
 
@@ -851,14 +923,20 @@ class BedrockConverseAgent(Agent):
             "Too many successive tool invocations:{self.max_converse_iterations} "
         )
 
-    @traced("converse-stream", span_kind="SERVER")
+    @overload
     def converse_stream(
-        self, user_input: str, tools: Sequence[Callable | Tool] | None = None
+        self,
+        user_input: str,
+        stream: Literal["text"] = "text",
+        tools: Sequence[Callable | Tool] | None = None,
+        stop_event: Event | None = None,
     ) -> Iterable[str]:
         """
-        Start or continue a conversation with the agent and return the agent's response as an iterable of strings.
+        Start or continue a conversation with the agent.
 
-        The caller must consume this iterable and collect all strings and concatenate them to get the full response.
+        Response fragments (text chunks) are yielded as they are produced.
+
+        The caller must consume this iterable fully for the agent to progress.
 
         The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
 
@@ -866,13 +944,78 @@ class BedrockConverseAgent(Agent):
 
         The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
         """
+        ...
 
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"],
+        tools: Sequence[Callable | Tool] | None = None,
+        stop_event: Event | None = None,
+    ) -> Iterable[Trace]:
+        """
+        Start or continue a conversation with the agent.
+
+        Traces are yielded as they are produced by the agent and its tools.
+
+        The caller must consume this iterable fully for the agent to progress.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"] | Literal["text"] = "text",
+        tools: Sequence[Callable | Tool] | None = None,
+        stop_event: Event | None = None,
+    ) -> Iterable[str] | Iterable[Trace]:
+        gen = self._converse_stream(
+            user_input=user_input, tools=tools, stop_event=stop_event
+        )
+        if stream == "text":
+            yield from gen
+        elif stream == "traces":
+            with IterableTracer() as tracer:
+                self._tracer.add_tracer(tracer)
+                try:
+                    ctx = contextvars.copy_context()
+                    thread = Thread(
+                        target=ctx.run,
+                        args=[self._consume_traced_iterable, gen, tracer],
+                        daemon=True,
+                        name="converse_stream",
+                    )
+                    thread.start()
+                    try:
+                        yield from tracer
+                    finally:
+                        thread.join()
+                finally:
+                    self._tracer.remove_tracer(tracer)
+        else:
+            raise ValueError(f"stream must be 'text' or 'traces', but got {stream}")
+
+    @traced("converse-stream", span_kind="SERVER")
+    def _converse_stream(
+        self,
+        user_input: str,
+        tools: Sequence[Callable | Tool] | None = None,
+        stop_event: Event | None = None,
+    ) -> Iterable[str]:
         # If the current instance has an override for converse, use that one instead
         if (
-            type(self).converse_stream is BedrockConverseAgent.converse_stream
+            type(self) is not BedrockConverseAgent
+            and type(self).converse_stream is BedrockConverseAgent.converse_stream
             and type(self).converse is not BedrockConverseAgent.converse
         ):
-            return self.converse(user_input, tools=tools)
+            return self.converse(user_input, tools=tools, stop_event=stop_event)
 
         current_trace = self._tracer.current_trace
         current_trace.add_attribute("ai.trace.type", "converse-stream")
@@ -883,6 +1026,7 @@ class BedrockConverseAgent(Agent):
             "ai.auth.context", self.auth_context, inheritable=True
         )
         current_trace.add_attribute("ai.user.input", user_input)
+        current_trace.emit_snapshot()
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -943,6 +1087,9 @@ class BedrockConverseAgent(Agent):
         concatenated = ""
         texts: list[str] = [""]
         for _ in range(self.max_converse_iterations):
+            if stop_event and stop_event.is_set():
+                current_trace.add_attribute("ai.conversation.aborted", True)
+                return
             with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
                 model_id = request["modelId"]
                 trace.add_attribute(
@@ -991,6 +1138,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.request.performance.config",
                         request["performanceConfig"],
                     )
+                trace.emit_snapshot()
 
                 try:
                     response = self.bedrock_client.converse_stream(**request)
@@ -1012,6 +1160,10 @@ class BedrockConverseAgent(Agent):
 
                 is_reasoning = False
                 for stream_event in response["stream"]:
+                    if stop_event and stop_event.is_set():
+                        current_trace.add_attribute("ai.conversation.aborted", True)
+                        response["stream"].close()
+                        return
                     if "contentBlockStart" in stream_event:
                         index = stream_event["contentBlockStart"]["contentBlockIndex"]
                         stream_events[index].append(stream_event)
@@ -1023,8 +1175,12 @@ class BedrockConverseAgent(Agent):
                         text = stream_event["contentBlockDelta"]["delta"].get("text")
                         if text:
                             texts[-1] = text
-                            yield text
                             concatenated += text
+                            current_trace.add_attribute(
+                                "ai.agent.response", concatenated
+                            )
+                            current_trace.emit_snapshot()
+                            yield text
 
                         if self.include_reasoning_text_within_thinking_tags:
                             reasoning_content = stream_event["contentBlockDelta"][
@@ -1034,18 +1190,30 @@ class BedrockConverseAgent(Agent):
                                 reasoning_text = reasoning_content.get("text")
                                 if reasoning_text:
                                     if not is_reasoning:
-                                        yield "<thinking>\n"
                                         concatenated += "<thinking>\n"
+                                        current_trace.add_attribute(
+                                            "ai.agent.response", concatenated
+                                        )
+                                        current_trace.emit_snapshot()
                                         is_reasoning = True
+                                        yield "<thinking>\n"
                                     texts[-1] = reasoning_text
-                                    yield reasoning_text
                                     concatenated += reasoning_text
+                                    current_trace.add_attribute(
+                                        "ai.agent.response", concatenated
+                                    )
+                                    current_trace.emit_snapshot()
+                                    yield reasoning_text
                                 reasoning_signature = reasoning_content.get("signature")
                                 if reasoning_signature:
                                     if is_reasoning:
-                                        yield "\n</thinking>\n\n"
                                         concatenated += "\n</thinking>\n\n"
+                                        current_trace.add_attribute(
+                                            "ai.agent.response", concatenated
+                                        )
+                                        current_trace.emit_snapshot()
                                         is_reasoning = False
+                                        yield "\n</thinking>\n\n"
 
                     elif "contentBlockStop" in stream_event:
                         index = stream_event["contentBlockStop"]["contentBlockIndex"]
@@ -1058,8 +1226,10 @@ class BedrockConverseAgent(Agent):
 
                     elif "messageStop" in stream_event:
                         stop_reason = stream_event["messageStop"]["stopReason"]
-                        yield "\n"
                         concatenated += "\n"
+                        current_trace.add_attribute("ai.agent.response", concatenated)
+                        current_trace.emit_snapshot()
+                        yield "\n"
 
                     elif "metadata" in stream_event:
                         metadata = stream_event["metadata"]
@@ -1082,6 +1252,7 @@ class BedrockConverseAgent(Agent):
                         "ai.llm.response.performance.config",
                         metadata["performanceConfig"],
                     )
+                trace.emit_snapshot()
 
             self._add_message(message)
 
@@ -1230,6 +1401,14 @@ class BedrockConverseAgent(Agent):
                 }
             },
         }
+
+    @staticmethod
+    def _consume_traced_iterable(iterable: Iterable[str], tracer: IterableTracer):
+        try:
+            for _ in iterable:
+                pass
+        finally:
+            tracer.shutdown()
 
 
 @runtime_checkable

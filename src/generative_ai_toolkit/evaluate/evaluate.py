@@ -83,7 +83,8 @@ class ConversationMeasurements:
 
         Additionally, for each key-value of the permutation, a column is added with key as column name, and the value as value.
         """
-        import pandas as pd
+
+        import pandas as pd  # noqa: PLC0415
 
         data = []
         for measurement in self.measurements:
