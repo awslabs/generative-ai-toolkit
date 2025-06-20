@@ -15,6 +15,7 @@
 import asyncio
 import time
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -47,7 +48,7 @@ def test_mcp_client(mock_bedrock_converse):
         },
     }
 
-    def chat_loop(agent: Agent):
+    def chat_loop(agent: Agent, stop_event: Event):
         agent.converse("What is the weather currently?")
 
     mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
@@ -90,7 +91,7 @@ def test_mcp_server_verification(mock_bedrock_converse):
         await asyncio.sleep(0.1)
         raise RuntimeError(f"MCP server tool verification failed: {mcp_server_config}")
 
-    def chat_loop(agent: Agent):
+    def chat_loop(agent: Agent, stop_event: Event):
         pass
 
     # Sync - success
