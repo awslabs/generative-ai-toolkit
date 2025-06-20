@@ -636,14 +636,14 @@ Which would print e.g.:
 
 ##### Streaming traces
 
-With `converse_stream()` you can iterate over traces in real-time, as they are produced by the agent and its tools:
+With `converse_stream()` you can iterate over traces in real-time, as they are produced by the agent and its tools. For this, set parameter `stream` to `traces`:
 
 ```python
 for trace in agent.converse_stream("What's the capital of France?", stream="traces"):
     print(trace)
 ```
 
-This yields `Trace` objects as they are generated during the conversation, allowing you to monitor and analyze the agent's behavior as it runs. Each trace contains information about a specific operation (such as LLM invocation, tool usage, etc.) with all relevant attributes like timestamps, inputs, outputs, and more.
+In `traces` mode, `converse_stream()` yields `Trace` objects as they are generated during the conversation, allowing you to monitor and analyze the agent's behavior as it runs. Each trace contains information about a specific operation (such as LLM invocation, tool usage, etc.) with all relevant attributes like timestamps, inputs, outputs, and more.
 
 The stream includes both complete traces and trace snapshots. Snapshots represent intermediate traces that are still in progress and can be identified by checking if `trace.ended_at` is `None`.
 
