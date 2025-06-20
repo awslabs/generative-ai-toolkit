@@ -1835,7 +1835,7 @@ Note: only local MCP servers (that communicate over `stdio`) are supported curre
 
 #### Chat loop
 
-To chat with your MCP client, call `chat()`. This will start a REPL chat:
+To chat with your MCP client, call `chat()`. This will start the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations) with your MCP client:
 
 ```python
 mcp_client.chat()
@@ -1844,11 +1844,7 @@ mcp_client.chat()
 ```
 MCP server configuration loaded: mcp.json
 
-MCP client ready. Type /q to quit. Type /t to list the available tools.
-
-You: /t
-
-Listing available tools:
+Registered tools:
 
   current_weather
   _______________
@@ -1857,18 +1853,20 @@ Listing available tools:
 
     This tool is already aware of the user's location, so you don't need to provide it.
 
-You: How's the weather?
-Assistant: It's currently sunny and 27 degrees Celsius outside.
+Running MCP client at http://127.0.0.1:7860/
 
-You: /q
-Assistant: Goodbye!
+Press CTRL-C to quit.
 ```
+
+The browser will open automatically and you can start chatting with the MCP client.
+
+##### Customize chat loop
 
 You can customize the chat loop by providing your own loop function:
 
 ```python
-def my_chat_loop(agent: Agent):
-    while True:
+def my_chat_loop(agent: Agent, stop_event: Event):
+    while not stop_event.is_set():
         user_input = input("Awesome user: ")
         if not user_input:
             break
