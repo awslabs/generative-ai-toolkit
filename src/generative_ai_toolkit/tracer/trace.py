@@ -118,7 +118,7 @@ class Trace:
 
         To avoid having to clone the entire chain of parent spans:
         - The clone will only include a pointer to its direct parent
-        - That parent span will will only have it's name, span id and trace id set
+        - That parent span will only have its name, span id and trace id set
         - The clone's attributes field will include all inheritable attributes from its parents
 
         For all intents and purposes, the clone will "look" the same as the original.
