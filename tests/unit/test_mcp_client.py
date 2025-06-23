@@ -15,7 +15,7 @@
 import asyncio
 import time
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 
 import pytest
 
@@ -48,13 +48,14 @@ def test_mcp_client(mock_bedrock_converse):
         },
     }
 
-    def chat_loop(agent: Agent, stop_event: Event):
+    def chat_fn(agent: Agent, stop_event: Event):
         agent.converse("What is the weather currently?")
 
     mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
     mock_bedrock_converse.add_output(text_output=["Sunny"])
 
-    mcp_client.chat(chat_loop=chat_loop)
+    # Run chat() in thread, as it uses asyncio.run() which wants to create its own event loop
+    run_until_complete_in_thread(mcp_client.chat, chat_fn)
 
     Expect(agent.traces).tool_invocations.to_include("current_weather")
     Expect(agent.traces).agent_text_response.to_equal("Sunny")
@@ -91,35 +92,69 @@ def test_mcp_server_verification(mock_bedrock_converse):
         await asyncio.sleep(0.1)
         raise RuntimeError(f"MCP server tool verification failed: {mcp_server_config}")
 
-    def chat_loop(agent: Agent, stop_event: Event):
+    def chat_fn(agent: Agent, stop_event: Event):
         pass
 
     # Sync - success
-    McpClient(
-        agent,
-        client_config_path=str(HERE / "mcp.json"),
-        verify_mcp_server_tool=pass_verification,
-    ).chat(chat_loop=chat_loop)
+    # Run chat() in thread, as it uses asyncio.run() which wants to create its own event loop
+    run_until_complete_in_thread(
+        McpClient(
+            agent,
+            client_config_path=str(HERE / "mcp.json"),
+            verify_mcp_server_tool=pass_verification,
+        ).chat,
+        chat_fn=chat_fn,
+    )
 
     # Async - success
-    McpClient(
-        agent,
-        client_config_path=str(HERE / "mcp.json"),
-        verify_mcp_server_tool=pass_verification_async,
-    ).chat(chat_loop=chat_loop)
+    # Run chat() in thread, as it uses asyncio.run() which wants to create its own event loop
+    run_until_complete_in_thread(
+        McpClient(
+            agent,
+            client_config_path=str(HERE / "mcp.json"),
+            verify_mcp_server_tool=pass_verification_async,
+        ).chat,
+        chat_fn=chat_fn,
+    )
 
     # Sync - fail
+    # Run chat() in thread, as it uses asyncio.run() which wants to create its own event loop
     with pytest.raises(RuntimeError, match="MCP server tool verification failed"):
-        McpClient(
-            agent,
-            client_config_path=str(HERE / "mcp.json"),
-            verify_mcp_server_tool=fail_verification_async,
-        ).chat(chat_loop=chat_loop)
+        run_until_complete_in_thread(
+            McpClient(
+                agent,
+                client_config_path=str(HERE / "mcp.json"),
+                verify_mcp_server_tool=fail_verification_async,
+            ).chat,
+            chat_fn=chat_fn,
+        )
 
     # Async - fail
+    # Run chat() in thread, as it uses asyncio.run() which wants to create its own event loop
     with pytest.raises(RuntimeError, match="MCP server tool verification failed"):
-        McpClient(
-            agent,
-            client_config_path=str(HERE / "mcp.json"),
-            verify_mcp_server_tool=fail_verification,
-        ).chat(chat_loop=chat_loop)
+        run_until_complete_in_thread(
+            McpClient(
+                agent,
+                client_config_path=str(HERE / "mcp.json"),
+                verify_mcp_server_tool=fail_verification,
+            ).chat,
+            chat_fn=chat_fn,
+        )
+
+
+def run_until_complete_in_thread(target, *args, **kwargs):
+    res = []
+    err = []
+
+    def capture(*args, **kwargs):
+        try:
+            res.append(target(*args, **kwargs))
+        except Exception as e:
+            err.append(e)
+
+    thread = Thread(target=capture, args=args, kwargs=kwargs, daemon=True)
+    thread.start()
+    thread.join()
+    if err:
+        raise err[0]
+    return res[0]

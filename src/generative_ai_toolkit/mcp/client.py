@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import signal
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
@@ -211,31 +212,37 @@ class McpClient:
 
     def chat(
         self,
-        chat_loop: Callable[[Agent, Event], Any] | None = None,
+        chat_fn: Callable[[Agent, Event], Any] | None = None,
+        *,
+        stop_event: Event | None = None,
     ):
-        asyncio.run(self._chat(chat_loop))
+        asyncio.run(self._chat(chat_fn, stop_event=stop_event))
 
     async def _chat(
         self,
-        chat_loop: Callable[[Agent, Event], Any] | None = None,
+        chat_fn: Callable[[Agent, Event], Any] | None = None,
+        *,
+        stop_event: Event | None = None,
     ):
         loop = asyncio.get_running_loop()
         cleanup = await self.connect_mcp_servers(loop)
-        stop_event = Event()
+        stop_event = stop_event or Event()
 
-        def handler(signum, frame):
-            stop_event.set()
+        if threading.current_thread() is threading.main_thread():
 
-        signal.signal(signal.SIGINT, handler)
+            def handler(signum, frame):
+                stop_event.set()
+
+            signal.signal(signal.SIGINT, handler)
 
         try:
             await loop.run_in_executor(
-                None, chat_loop or self._default_chat_loop, self.agent, stop_event
+                None, chat_fn or self._default_chat_fn, self.agent, stop_event
             )
         finally:
             await cleanup()
 
-    def _default_chat_loop(self, agent: Agent, stop_event: Event):
+    def _default_chat_fn(self, agent: Agent, stop_event: Event):
         """
         Chat with the MCP client
 

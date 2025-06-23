@@ -1865,7 +1865,7 @@ The browser will open automatically and you can start chatting with the MCP clie
 You can customize the chat loop by providing your own loop function:
 
 ```python
-def my_chat_loop(agent: Agent, stop_event: Event):
+def my_chat_fn(agent: Agent, stop_event: Event):
     while not stop_event.is_set():
         user_input = input("Awesome user: ")
         if not user_input:
@@ -1878,7 +1878,7 @@ def my_chat_loop(agent: Agent, stop_event: Event):
 And then:
 
 ```python
-mcp_client.chat(chat_loop=my_chat_loop)
+mcp_client.chat(chat_fn=my_chat_fn)
 ```
 
 ```

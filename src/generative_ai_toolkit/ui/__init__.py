@@ -123,6 +123,7 @@ def chat_ui(
             submit_btn=True,
             autofocus=True,
             show_label=False,
+            elem_id="user-input",
         )
 
         msg.submit(
