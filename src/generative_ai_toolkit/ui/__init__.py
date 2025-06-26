@@ -51,7 +51,15 @@ def chat_ui(
             Event(),
         )
 
+    def user_stop(stop_event: Event | None):
+        if stop_event:
+            stop_event.set()
+        return gr.update(stop_btn=False)
+
     def assistant_stream(user_input: str, stop_event: Event | None):
+        if not user_input:
+            yield agent.traces
+            return
         traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
         for trace in agent.converse_stream(
             user_input, stream="traces", stop_event=stop_event
@@ -139,7 +147,7 @@ def chat_ui(
             outputs=[msg],
         )
 
-        msg.stop(lambda x: x and x.set(), inputs=[stop_event])
+        msg.stop(user_stop, inputs=[stop_event], outputs=[msg])
 
         traces_state.change(
             traces_state_change,
@@ -434,6 +442,13 @@ def get_markdown_for_measurement(measurement: Measurement):
     return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
+def repr_value(v):
+    if isinstance(v, str) and (v.startswith("https://") or v.startswith("http://")):
+        return f"<a href={v} target='_blank' rel='noopener noreferrer'>{v}</a>"
+    else:
+        return repr(v)
+
+
 def chat_messages_from_trace_summary(
     summary: TraceSummary,
     *,
@@ -465,6 +480,13 @@ def chat_messages_from_trace_summary(
             if "exception.message" in trace.attributes:
                 metadata.pop("status", None)
             if trace.attributes.get("ai.trace.type") == "tool-invocation":
+                tool_input_str = " ".join(
+                    f"{k}={repr_value(v)}"
+                    for k, v in trace.attributes.get("ai.tool.input", {}).items()
+                )
+                if len(tool_input_str) > 300:
+                    tool_input_str = tool_input_str[:297] + "..."
+                metadata["title"] += f" [{tool_input_str}]"
                 if "ai.tool.error" in trace.attributes:
                     metadata.pop("status", None)
                 chat_messages.append(
