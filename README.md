@@ -409,13 +409,15 @@ You can then simply scan all modules under `my_tools` and add the tools therein 
 ```python
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.agent.registry import DEFAULT_TOOL_REGISTRY
-# You have to import the package with your tools:
+
+# You have to import the package with your tools
+# (this can just be a local folder with .py files)
 import my_tools
 
 # Then, use the registry to scan the package (and it's children, recursively) for tools:
 agent = BedrockConverseAgent(
     model_id="anthropic.claude-3-sonnet-20240229-v1:0",
-    tools=DEFAULT_TOOL_REGISTRY.scan_tools(my_tools_module),
+    tools=DEFAULT_TOOL_REGISTRY.scan_tools(my_tools),
 )
 ```
 
