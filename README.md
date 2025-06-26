@@ -385,6 +385,72 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
 
+##### Tool Registry
+
+You can organize and discover tools using the `ToolRegistry` and `@tool` decorator. Using the `@tool` decorator can be easier than importing and invoking `agent.register_tool()` for each tool individually.
+
+For example, let's say you have this in `my_tools/weather.py`:
+
+```python
+from generative_ai_toolkit.agent import registry
+
+# Use the decorator to register a function with the default tool registry:
+@registry.tool
+def get_weather(city: str) ->; str:
+    """Gets the current weather for a city"""
+    return f"Sunny in {city}"
+
+# More tools here, all decorated with @registry.tool
+# ...
+```
+
+You can then simply scan all modules under `my_tools` and add the tools therein to your agent like so:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.agent.registry import DEFAULT_TOOL_REGISTRY
+# You have to import the package with your tools:
+import my_tools
+
+# Then, use the registry to scan the package (and it's children, recursively) for tools:
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    tools=DEFAULT_TOOL_REGISTRY.scan_tools(my_tools_module),
+)
+```
+
+By default the `@tool` decorator adds tools to the `DEFAULT_TOOL_REGISTRY` but you can also add them to a custom registry. This can be convenient in a multi-agent scenario:
+
+```python
+from generative_ai_toolkit.agent.registry import ToolRegistry, tool
+
+# Create separate registries for different agents
+weather_registry = ToolRegistry()
+finance_registry = ToolRegistry()
+
+# Register tools with specific registries
+@tool(tool_registry=weather_registry)
+def get_weather_forecast(city: str) -> str:
+    """Gets the weather forecast for a city"""
+    return f"Sunny forecast for {city}"
+
+@tool(tool_registry=finance_registry)
+def get_stock_price(ticker: str) -> float:
+    """Gets the current stock price"""
+    return 100.0
+
+# Create specialized agents with their own tool sets
+weather_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+    tools=weather_registry,
+)
+
+finance_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    tools=finance_registry,
+)
+```
+
 #### 2.2.5 Multi-Agent Support
 
 Agents can themselves be used as tool too. This allows you to build hierarchical multi-agent systems, where a supervisor agent can use specialized subordinate agents to delegate tasks to.
