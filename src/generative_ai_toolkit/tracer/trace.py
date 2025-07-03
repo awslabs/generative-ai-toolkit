@@ -18,6 +18,7 @@ import secrets
 import threading
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import (
     Any,
     Literal,
@@ -111,6 +112,8 @@ class Trace:
         )
         self.span_status = span_status
         self._snapshot_handler = snapshot_handler
+        self._deepcopy_lock = threading.Lock()
+        self._attributes_lock = threading.Lock()
 
     def clone(self):
         """
@@ -139,9 +142,13 @@ class Trace:
             ),
             started_at=self.started_at,
             ended_at=self.ended_at,
-            attributes=dict(thread_safe_deepcopy(self.attributes)),
+            attributes=dict(
+                thread_safe_deepcopy(self.attributes, lock=self._deepcopy_lock)
+            ),
             span_status=self.span_status,
-            resource_attributes=thread_safe_deepcopy(self.resource_attributes),
+            resource_attributes=thread_safe_deepcopy(
+                self.resource_attributes, lock=self._deepcopy_lock
+            ),
             scope=self.scope,
         )
         return copied
@@ -152,10 +159,11 @@ class Trace:
 
     @property
     def attributes(self) -> Mapping[str, Any]:
-        attributes = self._attributes | self._inheritable_attributes
-        for parent in reversed(self.parents):
-            attributes.update(parent._inheritable_attributes)
-        return attributes
+        with self._attributes_lock:
+            attributes = self._attributes | self._inheritable_attributes
+            for parent in reversed(self.parents):
+                attributes.update(parent._inheritable_attributes)
+            return attributes
 
     @property
     def parents(self) -> list["Trace"]:
@@ -179,11 +187,14 @@ class Trace:
         *,
         inheritable=False,
     ) -> "Trace":
-        attribute_value = thread_safe_deepcopy(attribute_value)
-        self._attributes[attribute_key] = attribute_value
-        if inheritable:
-            self._inheritable_attributes[attribute_key] = attribute_value
-        return self
+        attribute_value = thread_safe_deepcopy(
+            attribute_value, lock=self._deepcopy_lock
+        )
+        with self._attributes_lock:
+            self._attributes[attribute_key] = attribute_value
+            if inheritable:
+                self._inheritable_attributes[attribute_key] = attribute_value
+            return self
 
     def __repr__(self) -> str:
         return (
@@ -282,7 +293,7 @@ class Trace:
             )
         )
         attrs_str = " ".join(
-            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else json.dumps(v), 80) }"
+            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else v["principal_id"] if k == "ai.auth.context" else json.dumps(v, cls=TraceJsonEncoder), 80) }"
             for k, v in important_attrs.items()
         )
 
@@ -362,3 +373,12 @@ class TraceScope(NamedTuple):
 
     def __repr__(self) -> str:
         return f"{self.name}@{self.version}"
+
+
+class TraceJsonEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, SimpleNamespace):
+            return o.__dict__
+        return str(o)
