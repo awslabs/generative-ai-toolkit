@@ -29,9 +29,11 @@ import gradio as gr
 from gradio.components.chatbot import MetadataDict
 
 from generative_ai_toolkit.agent import Agent
+from generative_ai_toolkit.context import AuthContext
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 
 def chat_ui(
@@ -172,7 +174,7 @@ class TraceSummary:
     started_at: datetime.datetime
     duration_ms: int | None
     conversation_id: str
-    auth_context: str | None = None
+    auth_context: AuthContext = field(default_factory=lambda: {"principal_id": None})
     user_input: str = ""
     agent_response: str = ""
     all_traces: list[Trace] = field(default_factory=list)
@@ -192,7 +194,7 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
         root_trace = traces_for_trace_id[0]
         summary = TraceSummary(
             conversation_id=root_trace.attributes["ai.conversation.id"],
-            auth_context=root_trace.attributes.get("ai.auth.context"),
+            auth_context=root_trace.attributes["ai.auth.context"],
             trace_id=trace_id,
             span_id=root_trace.span_id,
             duration_ms=root_trace.ended_at and root_trace.duration_ms,
@@ -243,7 +245,9 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
             """
         )
         .lstrip()
-        .format(tool_input_json=json.dumps(tool_input, indent=2, default=str))
+        .format(
+            tool_input_json=json.dumps(tool_input, indent=2, cls=DefaultJsonEncoder)
+        )
     )
     if tool_output:
         res += textwrap.dedent(
@@ -267,7 +271,11 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
                 {tool_output_json}
                 ~~~
                 """
-            ).format(tool_output_json=json.dumps(tool_output, indent=2, default=str))
+            ).format(
+                tool_output_json=json.dumps(
+                    tool_output, indent=2, cls=DefaultJsonEncoder
+                )
+            )
     if tool_error_traceback:
         res += textwrap.dedent(
             """
@@ -292,7 +300,9 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
             ~~~
             """
         ).format(
-            rest_attributes_json=json.dumps(rest_attributes, indent=2, default=str)
+            rest_attributes_json=json.dumps(
+                rest_attributes, indent=2, cls=DefaultJsonEncoder
+            )
         )
     return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
@@ -376,7 +386,9 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             **Attributes**
             {rest_attributes_json}
             """
-        ).format(rest_attributes_json=json.dumps(rest_attributes))
+        ).format(
+            rest_attributes_json=json.dumps(rest_attributes, cls=DefaultJsonEncoder)
+        )
     return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
@@ -408,7 +420,8 @@ def get_markdown_generic(trace: Trace):
                     "ai.auth.context",
                     "peer.service",
                 ],
-            )
+            ),
+            cls=DefaultJsonEncoder,
         ),
     )
     return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
@@ -430,14 +443,18 @@ def get_markdown_for_measurement(measurement: Measurement):
             **Additional Info**
             {additional_info}
             """
-        ).format(additional_info=json.dumps(measurement.additional_info))
+        ).format(
+            additional_info=json.dumps(
+                measurement.additional_info, cls=DefaultJsonEncoder
+            )
+        )
     if measurement.dimensions:
         res += textwrap.dedent(
             """
             **Dimensions**
             {dimensions}
             """
-        ).format(dimensions=json.dumps(measurement.dimensions))
+        ).format(dimensions=json.dumps(measurement.dimensions, cls=DefaultJsonEncoder))
 
     return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
@@ -555,7 +572,9 @@ def chat_messages_from_traces(
     if not traces:
         return None, None, []
     summaries = get_summaries_for_traces(traces)
-    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
+    conversations = {
+        (s.conversation_id, s.auth_context["principal_id"]) for s in summaries
+    }
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()
@@ -578,7 +597,9 @@ def chat_messages_from_conversation_measurements(
     summaries = get_summaries_for_conversation_measurements(conv_measurements)
     if not summaries:
         return None, None, []
-    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
+    conversations = {
+        (s.conversation_id, s.auth_context["principal_id"]) for s in summaries
+    }
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()

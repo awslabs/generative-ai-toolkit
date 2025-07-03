@@ -16,9 +16,7 @@ import json
 from datetime import UTC, date, datetime, time
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
-from generative_ai_toolkit.agent.tool import (
-    ToolResultJsonEncoder,
-)
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 
 class Foo:
@@ -35,7 +33,7 @@ def test_tool_result_json_encoder():
     foo = Foo()
 
     assert (
-        json.dumps(foo, cls=ToolResultJsonEncoder)
+        json.dumps(foo, cls=DefaultJsonEncoder)
         == '{"foo": "bar", "bar": "2021-01-01T01:01:01+00:00", "baz": "2022-02-02", "qux": "01:02:03.000004"}'
     )
 

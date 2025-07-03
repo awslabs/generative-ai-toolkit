@@ -40,8 +40,8 @@ from botocore.config import Config
 from generative_ai_toolkit.agent.tool import (
     BedrockConverseTool,
     Tool,
-    ToolResultJsonEncoder,
 )
+from generative_ai_toolkit.context import AgentContext, AuthContext
 from generative_ai_toolkit.conversation_history import (
     ConversationHistory,
     InMemoryConversationHistory,
@@ -59,6 +59,7 @@ from generative_ai_toolkit.tracer.context import (
     TraceContext,
     TraceContextUpdate,
 )
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
@@ -158,13 +159,13 @@ class Agent(Tool, Protocol):
         ...
 
     @property
-    def auth_context(self) -> str | None:
+    def auth_context(self) -> AuthContext:
         """
         The current auth context of the agent.
         """
         ...
 
-    def set_auth_context(self, auth_context: str | None) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         """
         Set the auth context of the agent.
         """
@@ -457,7 +458,7 @@ class BedrockConverseAgent(Agent):
             max_workers=8, thread_name_prefix="tool-invocation"
         )
         self.tool_result_json_encoder: type[json.JSONEncoder] = (
-            tool_result_json_encoder or ToolResultJsonEncoder
+            tool_result_json_encoder or DefaultJsonEncoder
         )
         self.include_reasoning_text_within_thinking_tags = (
             include_reasoning_text_within_thinking_tags
@@ -584,11 +585,11 @@ class BedrockConverseAgent(Agent):
         """
         return self._conversation_history.auth_context
 
-    def set_auth_context(self, auth_context: str | None) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         """
         Set the auth context of the agent.
         """
-        self._conversation_history.set_auth_context(auth_context)
+        self._conversation_history.set_auth_context(**auth_context)
 
     def reset(self):
         """
@@ -624,12 +625,27 @@ class BedrockConverseAgent(Agent):
         self, messages: Sequence["ContentBlockOutputTypeDef"], tools: Mapping[str, Tool]
     ) -> list["ToolResultBlockUnionTypeDef"]:
         if len(messages) == 1:
-            return [self._invoke_tool(messages[0], tools)]
+            return [
+                AgentContext(
+                    auth_context=self.auth_context,
+                    tracer=self.tracer,
+                    conversation_id=self.conversation_id,
+                )
+                .copy_context()
+                .run(self._invoke_tool, messages[0], tools)
+            ]
         return list(
             self.executor.map(
                 lambda msg, ctx: ctx.run(self._invoke_tool, msg, tools),
                 messages,
-                (contextvars.copy_context() for _ in messages),
+                (
+                    AgentContext(
+                        auth_context=self.auth_context,
+                        tracer=self.tracer,
+                        conversation_id=self.conversation_id,
+                    ).copy_context()
+                    for _ in messages
+                ),
             )
         )
 
@@ -655,7 +671,7 @@ class BedrockConverseAgent(Agent):
                 if not tool:
                     raise ValueError(f"Unknown tool: {tool_name}")
                 if isinstance(tool, AgentAsTool):
-                    tool.set_auth_context(self.auth_context)
+                    tool.set_auth_context(**self.auth_context)
                     tool.set_conversation_id(self.conversation_id)
                     tool.set_trace_context(span=self.tracer.current_trace)
                 tool_response = tool.invoke(**tool_use["input"])
@@ -1370,7 +1386,7 @@ class BedrockConverseAgent(Agent):
                 if param_name in kwargs:
                     param_value = kwargs.pop(param_name)
                     params[param_name] = param_value
-            user_input = f"Your input is:\n\n{json.dumps(params)}"
+            user_input = f"Your input is:\n\n{json.dumps(params, cls=DefaultJsonEncoder)}"
         return self.converse(*args, **kwargs, user_input=user_input)
 
     @property
@@ -1427,7 +1443,7 @@ class AgentAsTool(Protocol):
         """
         ...
 
-    def set_auth_context(self, auth_context: str | None) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         """
         Set the auth context of the agent.
         """
