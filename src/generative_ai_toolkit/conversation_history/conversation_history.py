@@ -14,7 +14,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, Unpack
 
 import boto3
 import boto3.session
@@ -23,6 +23,7 @@ from boto3.dynamodb.conditions import Key
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef
 
+from generative_ai_toolkit.context import AuthContext
 from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
 from generative_ai_toolkit.utils.ulid import Ulid
 
@@ -42,13 +43,15 @@ class ConversationHistory(Protocol):
         ...
 
     @property
-    def auth_context(self) -> str | None:
+    def auth_context(self) -> AuthContext:
         """
         The current auth context
         """
         ...
 
-    def set_auth_context(self, auth_context: str | None) -> None:
+    def set_auth_context(
+        self, **auth_context: Unpack[AuthContext]
+    ) -> None:
         """
         Set the current auth context
         """
@@ -77,13 +80,13 @@ class ConversationHistory(Protocol):
 class InMemoryConversationHistory(ConversationHistory):
     _conversation_id: str
     _message_cache: dict[str | None, dict[str, list["MessageUnionTypeDef"]]]
-    _auth_context: str | None
+    _auth_context: AuthContext
 
     def __init__(
         self,
     ) -> None:
         self._conversation_id = Ulid().ulid
-        self._auth_context = None
+        self._auth_context = {"principal_id": None}
         self._message_cache = {}
 
     @property
@@ -94,20 +97,22 @@ class InMemoryConversationHistory(ConversationHistory):
         self._conversation_id = conversation_id
 
     @property
-    def auth_context(self) -> str | None:
+    def auth_context(self) -> AuthContext:
         return self._auth_context
 
-    def set_auth_context(self, auth_context: str | None):
+    def set_auth_context(
+        self, **auth_context: Unpack[AuthContext]
+    ) -> None:
         self._auth_context = auth_context
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
-        self._message_cache.setdefault(self._auth_context, {}).setdefault(
-            self._conversation_id, []
-        ).append(msg)
+        self._message_cache.setdefault(
+            self._auth_context["principal_id"], {}
+        ).setdefault(self._conversation_id, []).append(msg)
 
     @property
     def messages(self) -> Sequence["MessageUnionTypeDef"]:
-        return self._message_cache.get(self._auth_context, {}).get(
+        return self._message_cache.get(self._auth_context["principal_id"], {}).get(
             self._conversation_id, []
         )
 
@@ -117,7 +122,7 @@ class InMemoryConversationHistory(ConversationHistory):
 
 class DynamoDbConversationHistory(ConversationHistory):
     _conversation_id: str
-    _auth_context: str | None
+    _auth_context: AuthContext
 
     def __init__(
         self,
@@ -128,7 +133,7 @@ class DynamoDbConversationHistory(ConversationHistory):
     ) -> None:
         self.table = (session or boto3).resource("dynamodb").Table(table_name)
         self._conversation_id = Ulid().ulid
-        self._auth_context = None
+        self._auth_context = {"principal_id": None}
         self.identifier = identifier
 
     def __repr__(self) -> str:
@@ -142,16 +147,18 @@ class DynamoDbConversationHistory(ConversationHistory):
         self._conversation_id = conversation_id
 
     @property
-    def auth_context(self) -> str | None:
+    def auth_context(self) -> AuthContext:
         return self._auth_context
 
-    def set_auth_context(self, auth_context: str | None):
+    def set_auth_context(
+        self, **auth_context: Unpack[AuthContext]
+    ) -> None:
         self._auth_context = auth_context
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
         now = datetime.now(UTC)
         item = {
-            "pk": f"CONV#{self._auth_context or "_"}#{self.conversation_id}",
+            "pk": f"CONV#{self._auth_context["principal_id"] or "_"}#{self.conversation_id}",
             "sk": f"MSG#{self.identifier or "_"}#{int(now.timestamp() * 1000):014x}",
             "created_at": now.isoformat(),
             "conversation_id": self.conversation_id,
@@ -180,7 +187,7 @@ class DynamoDbConversationHistory(ConversationHistory):
             try:
                 response = self.table.query(
                     KeyConditionExpression=Key("pk").eq(
-                        f"CONV#{self._auth_context or "_"}#{self.conversation_id}"
+                        f"CONV#{self._auth_context["principal_id"] or "_"}#{self.conversation_id}"
                     )
                     & Key("sk").begins_with(f"MSG#{self.identifier or "_"}#"),
                     **last_evaluated_key_param,

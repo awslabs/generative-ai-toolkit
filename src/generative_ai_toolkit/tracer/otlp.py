@@ -45,9 +45,9 @@ from opentelemetry.proto.trace.v1.trace_pb2 import (
     Status as OtlpStatus,
 )
 
+from generative_ai_toolkit.tracer.trace import Trace, TraceJsonEncoder
 from generative_ai_toolkit.tracer.tracer import (
     BaseTracer,
-    Trace,
     TraceContextProvider,
     TraceScope,
 )
@@ -148,7 +148,9 @@ class OtlpBatch:
         elif value is None:
             return OtlpAnyValue()
         else:
-            return OtlpAnyValue(string_value=json.dumps(value, default=str))
+            return OtlpAnyValue(
+                string_value=json.dumps(value, cls=TraceJsonEncoder, default=str)
+            )
 
     SPAN_KIND_PROTOBUF_MAPPING = {
         "SERVER": OtlpSpan.SpanKind.SPAN_KIND_SERVER,
