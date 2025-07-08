@@ -308,6 +308,7 @@ class BedrockConverseAgent(Agent):
         name: str | None = None,
         description: str | None = None,
         input_schema: dict[str, Any] | None = None,
+        converse_implementation: Literal["converse", "converse-stream"] | None = None,
     ) -> None:
         """
         Create an Agent that will use the Bedrock Converse API to operate.
@@ -368,6 +369,10 @@ class BedrockConverseAgent(Agent):
             Description of the agent when used as a tool
         input_schema : dict[str, Any] | None, optional
             JSON schema for the input when the agent is used as a tool. If not provided, the agent is assumed to take its input as as single string.
+        converse_implementation : Literal["converse", "converse-stream"] | None, optional
+            The Amazon Bedrock API to use. By default this matches the agent method you invoke on the agent: if you invoke `agent.converse()` that will use the Converse API (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html), and if you invoke `agent.converse_stream()` that will use the ConverseStream API (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html).
+            By setting `converse_implementation` to either `"converse"` or `"converse-stream"`, you can force usage of either the Converse or ConverseStream API. For example, if you set `converse_implementation` to `"converse"`, then even when you invoke `agent.converse_stream()` that will actually use the Converse API, not ConverseStream.
+            An example where this may be useful to you, is where you want to call `agent.converse_stream()` (e.g. for streaming traces) with a foundational model that doesn't support ConverseStream with tools (see https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html), so you need to force usage of the Converse API.
         """
         self._system_prompt = system_prompt
         self._model_id = model_id
@@ -471,6 +476,8 @@ class BedrockConverseAgent(Agent):
 
         self.input_schema = input_schema
         "JSON schema (override) for the input when the agent is used as a tool"
+
+        self.converse_implementation = converse_implementation
 
     @classmethod
     def _prune_instances_used(cls):
@@ -726,20 +733,6 @@ class BedrockConverseAgent(Agent):
         The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
         """
 
-        # If the current instance has an override for converse_stream, use that one instead
-        if (
-            type(self) is not BedrockConverseAgent
-            and type(self).converse is BedrockConverseAgent.converse
-            and (
-                type(self).converse_stream is not BedrockConverseAgent.converse_stream
-                or type(self)._converse_stream
-                is not BedrockConverseAgent._converse_stream
-            )
-        ):
-            return "".join(
-                self.converse_stream(user_input, tools=tools, stop_event=stop_event)
-            )
-
         current_trace = self._tracer.current_trace
         current_trace.add_attribute("ai.trace.type", "converse")
         current_trace.add_attribute(
@@ -750,6 +743,11 @@ class BedrockConverseAgent(Agent):
         )
         current_trace.add_attribute("ai.user.input", user_input)
         current_trace.emit_snapshot()
+
+        if self.converse_implementation == "converse-stream":
+            return "".join(
+                self.converse_stream(user_input, tools=tools, stop_event=stop_event)
+            )
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -808,86 +806,101 @@ class BedrockConverseAgent(Agent):
             }
 
         texts: list[str] = []
-        for _ in range(self.max_converse_iterations):
-            if stop_event and stop_event.is_set():
-                current_trace.add_attribute("ai.conversation.aborted", True)
-                concatenated = "\n".join(texts)
-                current_trace.add_attribute("ai.agent.response", concatenated)
-                return concatenated
-            with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
-                model_id = request["modelId"]
-                trace.add_attribute(
-                    "peer.service",
-                    self.shorten_bedrock_model_id(model_id, prefix="llm"),
-                )
-                trace.add_attribute("ai.trace.type", "llm-invocation")
-                trace.add_attribute(
-                    "ai.llm.request.inference.config", request["inferenceConfig"]
-                )
-                trace.add_attribute("ai.llm.request.messages", request["messages"])
-                trace.add_attribute("ai.llm.request.model.id", model_id)
-                trace.add_attribute("ai.llm.request.system", request.get("system"))
-                trace.add_attribute(
-                    "ai.llm.request.tool.config", request.get("toolConfig")
-                )
-                if "guardrailConfig" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.guardrail.config", request["guardrailConfig"]
-                    )
+        for i in range(self.max_converse_iterations):
+            with self._tracer.trace(f"cycle-{i}") as cycle_trace:
+                cycle_trace.add_attribute("ai.trace.type", "cycle")
+                cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)
 
-                if "additionalModelRequestFields" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.additional.model.request.fields",
-                        request["additionalModelRequestFields"],
-                    )
+                if stop_event and stop_event.is_set():
+                    current_trace.add_attribute("ai.conversation.aborted", True)
+                    concatenated = "\n".join(texts)
+                    current_trace.add_attribute("ai.agent.response", concatenated)
+                    return concatenated
 
-                if "additionalModelResponseFieldPaths" in request:
+                with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
+                    model_id = request["modelId"]
                     trace.add_attribute(
-                        "ai.llm.request.additional.model.response.field.paths",
-                        request["additionalModelResponseFieldPaths"],
+                        "peer.service",
+                        self.shorten_bedrock_model_id(model_id, prefix="llm"),
                     )
-
-                if "promptVariables" in request:
+                    trace.add_attribute("ai.trace.type", "llm-invocation")
                     trace.add_attribute(
-                        "ai.llm.request.prompt.variables", request["promptVariables"]
+                        "ai.llm.request.inference.config", request["inferenceConfig"]
                     )
-
-                if "requestMetadata" in request:
+                    trace.add_attribute("ai.llm.request.messages", request["messages"])
+                    trace.add_attribute("ai.llm.request.model.id", model_id)
+                    trace.add_attribute("ai.llm.request.system", request.get("system"))
                     trace.add_attribute(
-                        "ai.llm.request.request.metadata", request["requestMetadata"]
+                        "ai.llm.request.tool.config", request.get("toolConfig")
                     )
-
-                if "performanceConfig" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.performance.config",
-                        request["performanceConfig"],
-                    )
-                trace.emit_snapshot()
-
-                try:
-                    response = self.bedrock_client.converse(**request)
-                    trace.add_attribute("ai.llm.response.output", response["output"])
-                    trace.add_attribute(
-                        "ai.llm.response.stop.reason", response["stopReason"]
-                    )
-                    trace.add_attribute("ai.llm.response.usage", response["usage"])
-                    trace.add_attribute("ai.llm.response.metrics", response["metrics"])
-                    if "trace" in response:
-                        trace.add_attribute("ai.llm.response.trace", response["trace"])
-                    if "performanceConfig" in response:
+                    if "guardrailConfig" in request:
                         trace.add_attribute(
-                            "ai.llm.response.performance.config",
-                            response["performanceConfig"],
+                            "ai.llm.request.guardrail.config",
+                            request["guardrailConfig"],
+                        )
+
+                    if "additionalModelRequestFields" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.additional.model.request.fields",
+                            request["additionalModelRequestFields"],
+                        )
+
+                    if "additionalModelResponseFieldPaths" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.additional.model.response.field.paths",
+                            request["additionalModelResponseFieldPaths"],
+                        )
+
+                    if "promptVariables" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.prompt.variables",
+                            request["promptVariables"],
+                        )
+
+                    if "requestMetadata" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.request.metadata",
+                            request["requestMetadata"],
+                        )
+
+                    if "performanceConfig" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.performance.config",
+                            request["performanceConfig"],
                         )
                     trace.emit_snapshot()
 
-                except botocore.exceptions.ClientError as err:
-                    trace.add_attribute("ai.llm.response.error", err.response)
-                    raise
+                    try:
+                        response = self.bedrock_client.converse(**request)
+                        trace.add_attribute(
+                            "ai.llm.response.output", response["output"]
+                        )
+                        trace.add_attribute(
+                            "ai.llm.response.stop.reason", response["stopReason"]
+                        )
+                        trace.add_attribute("ai.llm.response.usage", response["usage"])
+                        trace.add_attribute(
+                            "ai.llm.response.metrics", response["metrics"]
+                        )
+                        if "trace" in response:
+                            trace.add_attribute(
+                                "ai.llm.response.trace", response["trace"]
+                            )
+                        if "performanceConfig" in response:
+                            trace.add_attribute(
+                                "ai.llm.response.performance.config",
+                                response["performanceConfig"],
+                            )
+                        trace.emit_snapshot()
+
+                    except botocore.exceptions.ClientError as err:
+                        trace.add_attribute("ai.llm.response.error", err.response)
+                        raise
 
             # Capture text to show user
             message = response["output"].get("message")
             if message:
+                cycle_text = ""
                 for msg_content in message["content"]:
                     if self.include_reasoning_text_within_thinking_tags:
                         reasoning_text = (
@@ -896,9 +909,18 @@ class BedrockConverseAgent(Agent):
                             .get("text")
                         )
                         if reasoning_text:
-                            texts.append(f"<thinking>\n{reasoning_text}\n</thinking>\n")
+                            cycle_text += f"<thinking>\n{reasoning_text}\n</thinking>\n"
                     if "text" in msg_content and msg_content["text"]:
-                        texts.append(msg_content["text"])
+                        cycle_text += msg_content["text"]
+                if cycle_text:
+                    cycle_trace.add_attribute("ai.agent.cycle.response", cycle_text)
+                    texts.append(cycle_text)
+                    cycle_trace.emit_snapshot()
+                    current_trace.add_attribute(
+                        "ai.agent.response",
+                        "\n".join(texts),
+                    )
+                    current_trace.emit_snapshot()
                 self._add_message(message)
 
                 if response["stopReason"] == "tool_use":
@@ -932,7 +954,6 @@ class BedrockConverseAgent(Agent):
                     "content_filtered",
                 ):
                     concatenated = "\n".join(texts)
-                    current_trace.add_attribute("ai.agent.response", concatenated)
                     return concatenated
 
         raise Exception(
@@ -1025,14 +1046,6 @@ class BedrockConverseAgent(Agent):
         tools: Sequence[Callable | Tool] | None = None,
         stop_event: Event | None = None,
     ) -> Iterable[str]:
-        # If the current instance has an override for converse, use that one instead
-        if (
-            type(self) is not BedrockConverseAgent
-            and type(self).converse_stream is BedrockConverseAgent.converse_stream
-            and type(self).converse is not BedrockConverseAgent.converse
-        ):
-            return self.converse(user_input, tools=tools, stop_event=stop_event)
-
         current_trace = self._tracer.current_trace
         current_trace.add_attribute("ai.trace.type", "converse-stream")
         current_trace.add_attribute(
@@ -1043,6 +1056,10 @@ class BedrockConverseAgent(Agent):
         )
         current_trace.add_attribute("ai.user.input", user_input)
         current_trace.emit_snapshot()
+
+        if self.converse_implementation == "converse":
+            yield self.converse(user_input, tools=tools, stop_event=stop_event)
+            return
 
         if not user_input:
             raise ValueError("Missing user input")
@@ -1100,209 +1117,250 @@ class BedrockConverseAgent(Agent):
                 ],
             }
 
-        concatenated = ""
-        texts: list[str] = [""]
-        for _ in range(self.max_converse_iterations):
-            if stop_event and stop_event.is_set():
-                current_trace.add_attribute("ai.conversation.aborted", True)
-                return
-            with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
-                model_id = request["modelId"]
-                trace.add_attribute(
-                    "peer.service",
-                    self.shorten_bedrock_model_id(model_id, prefix="llm"),
-                )
-                trace.add_attribute("ai.trace.type", "llm-invocation")
-                trace.add_attribute(
-                    "ai.llm.request.inference.config", request["inferenceConfig"]
-                )
-                trace.add_attribute("ai.llm.request.messages", request["messages"])
-                trace.add_attribute("ai.llm.request.model.id", model_id)
-                trace.add_attribute("ai.llm.request.system", request.get("system"))
-                trace.add_attribute(
-                    "ai.llm.request.tool.config", request.get("toolConfig")
-                )
-                if "guardrailConfig" in request:
+        texts: list[str] = []
+        for i in range(self.max_converse_iterations):
+            with self._tracer.trace(f"cycle-{i}") as cycle_trace:
+                cycle_trace.add_attribute("ai.trace.type", "cycle")
+                cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)
+
+                if stop_event and stop_event.is_set():
+                    current_trace.add_attribute("ai.conversation.aborted", True)
+                    return
+
+                texts.append("")
+
+                with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
+                    model_id = request["modelId"]
                     trace.add_attribute(
-                        "ai.llm.request.guardrail.config", request["guardrailConfig"]
+                        "peer.service",
+                        self.shorten_bedrock_model_id(model_id, prefix="llm"),
                     )
-
-                if "additionalModelRequestFields" in request:
+                    trace.add_attribute("ai.trace.type", "llm-invocation")
                     trace.add_attribute(
-                        "ai.llm.request.additional.model.request.fields",
-                        request["additionalModelRequestFields"],
+                        "ai.llm.request.inference.config", request["inferenceConfig"]
                     )
-
-                if "additionalModelResponseFieldPaths" in request:
+                    trace.add_attribute("ai.llm.request.messages", request["messages"])
+                    trace.add_attribute("ai.llm.request.model.id", model_id)
+                    trace.add_attribute("ai.llm.request.system", request.get("system"))
                     trace.add_attribute(
-                        "ai.llm.request.additional.model.response.field.paths",
-                        request["additionalModelResponseFieldPaths"],
+                        "ai.llm.request.tool.config", request.get("toolConfig")
                     )
-
-                if "promptVariables" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.prompt.variables", request["promptVariables"]
-                    )
-
-                if "requestMetadata" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.request.metadata", request["requestMetadata"]
-                    )
-
-                if "performanceConfig" in request:
-                    trace.add_attribute(
-                        "ai.llm.request.performance.config",
-                        request["performanceConfig"],
-                    )
-                trace.emit_snapshot()
-
-                try:
-                    response = self.bedrock_client.converse_stream(**request)
-                except botocore.exceptions.ClientError as err:
-                    trace.add_attribute("ai.llm.response.error", err.response)
-                    raise
-
-                metadata = None
-                stop_reason = None
-
-                content_blocks: list[ContentBlockOutputTypeDef] = []
-                message: MessageOutputTypeDef = {
-                    "role": "assistant",
-                    "content": content_blocks,
-                }
-                stream_events: dict[int, list[ConverseStreamOutputTypeDef]] = (
-                    defaultdict(list)
-                )
-
-                is_reasoning = False
-                for stream_event in response["stream"]:
-                    if stop_event and stop_event.is_set():
-                        current_trace.add_attribute("ai.conversation.aborted", True)
-                        response["stream"].close()
-                        return
-                    if "contentBlockStart" in stream_event:
-                        index = stream_event["contentBlockStart"]["contentBlockIndex"]
-                        stream_events[index].append(stream_event)
-
-                    elif "contentBlockDelta" in stream_event:
-                        index = stream_event["contentBlockDelta"]["contentBlockIndex"]
-                        stream_events[index].append(stream_event)
-
-                        text = stream_event["contentBlockDelta"]["delta"].get("text")
-                        if text:
-                            texts[-1] = text
-                            concatenated += text
-                            current_trace.add_attribute(
-                                "ai.agent.response", concatenated
-                            )
-                            current_trace.emit_snapshot()
-                            yield text
-
-                        if self.include_reasoning_text_within_thinking_tags:
-                            reasoning_content = stream_event["contentBlockDelta"][
-                                "delta"
-                            ].get("reasoningContent")
-                            if reasoning_content:
-                                reasoning_text = reasoning_content.get("text")
-                                if reasoning_text:
-                                    if not is_reasoning:
-                                        concatenated += "<thinking>\n"
-                                        current_trace.add_attribute(
-                                            "ai.agent.response", concatenated
-                                        )
-                                        current_trace.emit_snapshot()
-                                        is_reasoning = True
-                                        yield "<thinking>\n"
-                                    texts[-1] = reasoning_text
-                                    concatenated += reasoning_text
-                                    current_trace.add_attribute(
-                                        "ai.agent.response", concatenated
-                                    )
-                                    current_trace.emit_snapshot()
-                                    yield reasoning_text
-                                reasoning_signature = reasoning_content.get("signature")
-                                if reasoning_signature:
-                                    if is_reasoning:
-                                        concatenated += "\n</thinking>\n\n"
-                                        current_trace.add_attribute(
-                                            "ai.agent.response", concatenated
-                                        )
-                                        current_trace.emit_snapshot()
-                                        is_reasoning = False
-                                        yield "\n</thinking>\n\n"
-
-                    elif "contentBlockStop" in stream_event:
-                        index = stream_event["contentBlockStop"]["contentBlockIndex"]
-                        content_blocks.append(
-                            self.squash_stream_events(stream_events[index])
+                    if "guardrailConfig" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.guardrail.config",
+                            request["guardrailConfig"],
                         )
 
-                    elif "messageStart" in stream_event:
-                        pass
+                    if "additionalModelRequestFields" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.additional.model.request.fields",
+                            request["additionalModelRequestFields"],
+                        )
 
-                    elif "messageStop" in stream_event:
-                        stop_reason = stream_event["messageStop"]["stopReason"]
-                        concatenated += "\n"
-                        current_trace.add_attribute("ai.agent.response", concatenated)
-                        current_trace.emit_snapshot()
-                        yield "\n"
+                    if "additionalModelResponseFieldPaths" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.additional.model.response.field.paths",
+                            request["additionalModelResponseFieldPaths"],
+                        )
 
-                    elif "metadata" in stream_event:
-                        metadata = stream_event["metadata"]
-                    else:
-                        raise Exception(f"Unsupported stream event {stream_event}")
+                    if "promptVariables" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.prompt.variables",
+                            request["promptVariables"],
+                        )
 
-                if not metadata:
-                    raise ValueError("Incomplete response stream: missing metadata")
-                if not stop_reason:
-                    raise ValueError("Incomplete response stream: missing stop_reason")
+                    if "requestMetadata" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.request.metadata",
+                            request["requestMetadata"],
+                        )
 
-                trace.add_attribute("ai.llm.response.output", {"message": message})
-                trace.add_attribute("ai.llm.response.stop.reason", stop_reason)
-                trace.add_attribute("ai.llm.response.usage", metadata["usage"])
-                trace.add_attribute("ai.llm.response.metrics", metadata["metrics"])
-                if "trace" in metadata:
-                    trace.add_attribute("ai.llm.response.trace", metadata["trace"])
-                if "performanceConfig" in metadata:
-                    trace.add_attribute(
-                        "ai.llm.response.performance.config",
-                        metadata["performanceConfig"],
+                    if "performanceConfig" in request:
+                        trace.add_attribute(
+                            "ai.llm.request.performance.config",
+                            request["performanceConfig"],
+                        )
+                    trace.emit_snapshot()
+
+                    try:
+                        response = self.bedrock_client.converse_stream(**request)
+                    except botocore.exceptions.ClientError as err:
+                        trace.add_attribute("ai.llm.response.error", err.response)
+                        raise
+
+                    metadata = None
+                    stop_reason = None
+
+                    content_blocks: list[ContentBlockOutputTypeDef] = []
+                    message: MessageOutputTypeDef = {
+                        "role": "assistant",
+                        "content": content_blocks,
+                    }
+                    stream_events: dict[int, list[ConverseStreamOutputTypeDef]] = (
+                        defaultdict(list)
                     )
-                trace.emit_snapshot()
 
-            self._add_message(message)
+                    is_reasoning = False
+                    for stream_event in response["stream"]:
+                        if stop_event and stop_event.is_set():
+                            current_trace.add_attribute("ai.conversation.aborted", True)
+                            response["stream"].close()
+                            return
+                        if "contentBlockStart" in stream_event:
+                            index = stream_event["contentBlockStart"][
+                                "contentBlockIndex"
+                            ]
+                            stream_events[index].append(stream_event)
 
-            if stop_reason == "tool_use":
-                tool_results = self._invoke_tools(
-                    [message for message in content_blocks if "toolUse" in message],
-                    tools_available,
-                )
-                self._add_message(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "toolResult": tool_result,
-                            }
-                            for tool_result in tool_results
-                        ],
-                    },
-                )
-                request["messages"] = self.messages
-                continue
+                        elif "contentBlockDelta" in stream_event:
+                            index = stream_event["contentBlockDelta"][
+                                "contentBlockIndex"
+                            ]
+                            stream_events[index].append(stream_event)
 
-            elif stop_reason in (
-                "end_turn",
-                "max_tokens",
-                "stop_sequence",
-                "guardrail_intervened",
-                "content_filtered",
-            ):
-                break
+                            text = stream_event["contentBlockDelta"]["delta"].get(
+                                "text"
+                            )
+                            if text:
+                                texts[-1] += text
+                                cycle_trace.add_attribute(
+                                    "ai.agent.cycle.response", texts[-1]
+                                )
+                                cycle_trace.emit_snapshot()
+                                current_trace.add_attribute(
+                                    "ai.agent.response",
+                                    "\n".join(text for text in texts if text),
+                                )
+                                current_trace.emit_snapshot()
+                                yield text
+
+                            if self.include_reasoning_text_within_thinking_tags:
+                                reasoning_content = stream_event["contentBlockDelta"][
+                                    "delta"
+                                ].get("reasoningContent")
+                                if reasoning_content:
+                                    reasoning_text = reasoning_content.get("text")
+                                    if reasoning_text:
+                                        if not is_reasoning:
+                                            texts[-1] += "<thinking>\n"
+                                            cycle_trace.add_attribute(
+                                                "ai.agent.cycle.response", texts[-1]
+                                            )
+                                            cycle_trace.emit_snapshot()
+                                            current_trace.add_attribute(
+                                                "ai.agent.response",
+                                                "\n".join(
+                                                    text for text in texts if text
+                                                ),
+                                            )
+                                            current_trace.emit_snapshot()
+                                            is_reasoning = True
+                                            yield "<thinking>\n"
+                                        texts[-1] += reasoning_text
+                                        cycle_trace.add_attribute(
+                                            "ai.agent.cycle.response", texts[-1]
+                                        )
+                                        cycle_trace.emit_snapshot()
+                                        current_trace.add_attribute(
+                                            "ai.agent.response",
+                                            "\n".join(text for text in texts if text),
+                                        )
+                                        current_trace.emit_snapshot()
+                                        yield reasoning_text
+                                    reasoning_signature = reasoning_content.get(
+                                        "signature"
+                                    )
+                                    if reasoning_signature:
+                                        if is_reasoning:
+                                            texts[-1] += "\n</thinking>\n\n"
+                                            cycle_trace.add_attribute(
+                                                "ai.agent.cycle.response", texts[-1]
+                                            )
+                                            cycle_trace.emit_snapshot()
+                                            current_trace.add_attribute(
+                                                "ai.agent.response",
+                                                "\n".join(
+                                                    text for text in texts if text
+                                                ),
+                                            )
+                                            current_trace.emit_snapshot()
+                                            is_reasoning = False
+                                            yield "\n</thinking>\n\n"
+
+                        elif "contentBlockStop" in stream_event:
+                            index = stream_event["contentBlockStop"][
+                                "contentBlockIndex"
+                            ]
+                            content_blocks.append(
+                                self.squash_stream_events(stream_events[index])
+                            )
+
+                        elif "messageStart" in stream_event:
+                            pass
+
+                        elif "messageStop" in stream_event:
+                            stop_reason = stream_event["messageStop"]["stopReason"]
+                            yield "\n"
+
+                        elif "metadata" in stream_event:
+                            metadata = stream_event["metadata"]
+                        else:
+                            raise Exception(f"Unsupported stream event {stream_event}")
+
+                    if not metadata:
+                        raise ValueError("Incomplete response stream: missing metadata")
+                    if not stop_reason:
+                        raise ValueError(
+                            "Incomplete response stream: missing stop_reason"
+                        )
+
+                    trace.add_attribute("ai.llm.response.output", {"message": message})
+                    trace.add_attribute("ai.llm.response.stop.reason", stop_reason)
+                    trace.add_attribute("ai.llm.response.usage", metadata["usage"])
+                    trace.add_attribute("ai.llm.response.metrics", metadata["metrics"])
+                    if "trace" in metadata:
+                        trace.add_attribute("ai.llm.response.trace", metadata["trace"])
+                    if "performanceConfig" in metadata:
+                        trace.add_attribute(
+                            "ai.llm.response.performance.config",
+                            metadata["performanceConfig"],
+                        )
+                    trace.emit_snapshot()
+
+                if not texts[-1]:
+                    texts.pop()
+                self._add_message(message)
+
+                if stop_reason == "tool_use":
+                    tool_results = self._invoke_tools(
+                        [message for message in content_blocks if "toolUse" in message],
+                        tools_available,
+                    )
+                    self._add_message(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "toolResult": tool_result,
+                                }
+                                for tool_result in tool_results
+                            ],
+                        },
+                    )
+                    request["messages"] = self.messages
+                    continue
+
+                elif stop_reason in (
+                    "end_turn",
+                    "max_tokens",
+                    "stop_sequence",
+                    "guardrail_intervened",
+                    "content_filtered",
+                ):
+                    break
 
         else:
             raise Exception("Too many successive tool invocations")
-        current_trace.add_attribute("ai.agent.response", concatenated)
 
     @staticmethod
     def squash_stream_events(
@@ -1386,7 +1444,9 @@ class BedrockConverseAgent(Agent):
                 if param_name in kwargs:
                     param_value = kwargs.pop(param_name)
                     params[param_name] = param_value
-            user_input = f"Your input is:\n\n{json.dumps(params, cls=DefaultJsonEncoder)}"
+            user_input = (
+                f"Your input is:\n\n{json.dumps(params, cls=DefaultJsonEncoder)}"
+            )
         return self.converse(*args, **kwargs, user_input=user_input)
 
     @property

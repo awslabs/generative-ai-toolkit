@@ -144,6 +144,8 @@ def chat_ui(
             assistant_stream,
             inputs=[last_user_input, stop_event],
             outputs=[traces_state],
+            show_progress="full",
+            show_progress_on=[chatbot],
         ).then(
             lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
             outputs=[msg],
@@ -177,6 +179,7 @@ class TraceSummary:
     auth_context: AuthContext = field(default_factory=lambda: {"principal_id": None})
     user_input: str = ""
     agent_response: str = ""
+    agent_cycle_responses: dict[int, str] = field(default_factory=dict)
     all_traces: list[Trace] = field(default_factory=list)
     measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
         default_factory=dict
@@ -200,6 +203,14 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
             duration_ms=root_trace.ended_at and root_trace.duration_ms,
             started_at=root_trace.started_at,
             all_traces=traces_for_trace_id,
+            agent_cycle_responses={
+                trace.attributes["ai.agent.cycle.nr"]: trace.attributes[
+                    "ai.agent.cycle.response"
+                ]
+                for trace in traces_for_trace_id
+                if trace.attributes.get("ai.trace.type") == "cycle"
+                and "ai.agent.cycle.response" in trace.attributes
+            },
         )
 
         # Find (first) user input:
@@ -523,6 +534,22 @@ def chat_messages_from_trace_summary(
                         metadata=metadata,
                     )
                 )
+                cycle_nr = trace.attributes["ai.agent.cycle.nr"]
+                cycle_agent_response = summary.agent_cycle_responses.get(cycle_nr)
+                if cycle_agent_response:
+                    chat_messages.append(
+                        gr.ChatMessage(
+                            role="assistant",
+                            content=EscapeHtml.escape_html_except_code(
+                                cycle_agent_response, code_fence_style="backtick"
+                            ),
+                            metadata={
+                                "title": "Assistant",
+                                "id": summary.span_id,
+                                **summary_duration,
+                            },
+                        )
+                    )
             elif include_traces == "ALL":
                 chat_messages.append(
                     gr.ChatMessage(
@@ -552,15 +579,22 @@ def chat_messages_from_trace_summary(
                         metadata=metadata,
                     )
                 )
-    chat_messages.append(
-        gr.ChatMessage(
-            role="assistant",
-            content=EscapeHtml.escape_html_except_code(
-                summary.agent_response, code_fence_style="backtick"
-            ),
-            metadata={"title": "Assistant", "id": summary.span_id, **summary_duration},
-        )
-    )
+    else:
+        for cycle_agent_response in summary.agent_cycle_responses.values():
+            if cycle_agent_response:
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=EscapeHtml.escape_html_except_code(
+                            cycle_agent_response, code_fence_style="backtick"
+                        ),
+                        metadata={
+                            "title": "Assistant",
+                            "id": summary.span_id,
+                            **summary_duration,
+                        },
+                    )
+                )
     return chat_messages
 
 
