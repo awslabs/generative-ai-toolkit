@@ -82,12 +82,12 @@ def test_tool_decorator_with_default_registry():
         DEFAULT_TOOL_REGISTRY.clear()
 
 
-def test_tool_scan():
+def test_tool_recursive_import():
     """Test that functions marked with @tool can actually be found"""
     import tools_registry_test.weather  # noqa: PLC0415
 
     assert len(DEFAULT_TOOL_REGISTRY) == 0
-    DEFAULT_TOOL_REGISTRY.scan_tools(tools_registry_test.weather)
+    ToolRegistry.recursive_import(tools_registry_test.weather)
     assert len(DEFAULT_TOOL_REGISTRY) == 1
     from tools_registry_test.weather.get_weather import (  # noqa: PLC0415
         get_good_weather,
@@ -96,16 +96,29 @@ def test_tool_scan():
     assert DEFAULT_TOOL_REGISTRY[0] == get_good_weather
 
 
-def test_tool_scan_non_default_registry():
-    """Test that functions marked with @tool(registry=xyz) can actually be found"""
+def test_tool_recursive_import_non_default_registry():
+    """Test that functions marked with @tool(tool_registry=xyz) can actually be found"""
     import tools_registry_test.weather2  # noqa: PLC0415
     from tools_registry_test.other.other_registry import other_registry  # noqa: PLC0415
 
     assert len(other_registry) == 0
-    other_registry.scan_tools(tools_registry_test.weather2)
+    ToolRegistry.recursive_import(tools_registry_test.weather2)
     assert len(other_registry) == 1
     from tools_registry_test.weather2.get_weather import (  # noqa: PLC0415
         get_indeterminate_weather,
     )
 
     assert other_registry[0] == get_indeterminate_weather
+
+
+def test_tool_multi_registry():
+    """Test that functions marked with @tool(tool_registry=[1,2]) can actually be found"""
+    from tools_registry_test.other.other_registry import (  # noqa: I001, PLC0415
+        yet_another_registry,
+    )
+    assert len(yet_another_registry) == 0
+    import tools_registry_test.common.common_tool  # noqa: F401, PLC0415
+    assert len(yet_another_registry) == 1
+    assert (
+        yet_another_registry[0] == tools_registry_test.common.common_tool.my_common_tool
+    )

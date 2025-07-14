@@ -48,14 +48,15 @@ class ToolRegistry(Sequence):
             return ToolRegistry(self._tool_registry[index])
         return self._tool_registry[index]
 
-    def scan_tools(self, module: ModuleType):
+    @classmethod
+    def recursive_import(cls, module: ModuleType):
         for _, name, is_pkg in pkgutil.iter_modules(
             module.__path__, prefix=f"{module.__name__}."
         ):
             submod = importlib.import_module(name)
             if is_pkg:
-                self.scan_tools(submod)
-        return self
+                cls.recursive_import(submod)
+        return cls
 
 
 DEFAULT_TOOL_REGISTRY = ToolRegistry()
@@ -65,17 +66,21 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry()
 def tool[F: Callable[..., Any]](wrapped: F) -> F: ...
 @overload
 def tool[F: Callable[..., Any]](
-    *, tool_registry: ToolRegistry = DEFAULT_TOOL_REGISTRY
+    *, tool_registry: ToolRegistry | Sequence[ToolRegistry] = DEFAULT_TOOL_REGISTRY
 ) -> Callable[[F], F]: ...
 
 
 def tool(
     wrapped: Callable[..., Any] | None = None,
     *,
-    tool_registry: ToolRegistry = DEFAULT_TOOL_REGISTRY,
+    tool_registry: ToolRegistry | Sequence[ToolRegistry] = DEFAULT_TOOL_REGISTRY,
 ):
 
     def decorator[F: Callable[..., Any]](func: F) -> F:
+        if not isinstance(tool_registry, ToolRegistry):
+            for registry in tool_registry:
+                registry.add(func)
+            return func
         tool_registry.add(func)
         return func
 

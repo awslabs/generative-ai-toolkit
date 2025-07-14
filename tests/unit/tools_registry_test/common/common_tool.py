@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from tools_registry_test.other.other_registry import yet_another_registry
+
 from generative_ai_toolkit.agent import registry
 
-other_registry = registry.ToolRegistry([])
-yet_another_registry = registry.ToolRegistry([])
+
+@registry.tool(tool_registry=[registry.DEFAULT_TOOL_REGISTRY, yet_another_registry])
+def my_common_tool():
+    """
+    A common tol
+    """
+    return "Common"

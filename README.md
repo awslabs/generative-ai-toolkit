@@ -404,20 +404,26 @@ def get_weather(city: str) ->; str:
 # ...
 ```
 
-You can then simply scan all modules under `my_tools` and add the tools therein to your agent like so:
+You can then import all modules under `my_tools` and add the tools therein to your agent like so:
 
 ```python
 from generative_ai_toolkit.agent import BedrockConverseAgent
-from generative_ai_toolkit.agent.registry import DEFAULT_TOOL_REGISTRY
+from generative_ai_toolkit.agent.registry import ToolRegistry, DEFAULT_TOOL_REGISTRY
 
-# You have to import the package with your tools
-# (this can just be a local folder with .py files)
+# You have to import the Python modules with your tools.
+# If they are separate .py files in a local folder,
+# import the folder and all Python modules in it:
 import my_tools
+ToolRegistry.recursive_import(my_tools)
 
-# Then, use the registry to scan the package (and it's children, recursively) for tools:
+# This would have worked too, without needing recursive import,
+# but would be inconvenient if there's many such modules:
+import my_tools.weather
+
+# Then, use the populated registry upon creating your agent:
 agent = BedrockConverseAgent(
     model_id="anthropic.claude-3-sonnet-20240229-v1:0",
-    tools=DEFAULT_TOOL_REGISTRY.scan_tools(my_tools),
+    tools=DEFAULT_TOOL_REGISTRY,
 )
 ```
 
@@ -426,11 +432,11 @@ By default the `@tool` decorator adds tools to the `DEFAULT_TOOL_REGISTRY` but y
 ```python
 from generative_ai_toolkit.agent.registry import ToolRegistry, tool
 
-# Create separate registries for different agents
+# Create separate registries for different agents:
 weather_registry = ToolRegistry()
 finance_registry = ToolRegistry()
 
-# Register tools with specific registries
+# Register tools with specific registries:
 @tool(tool_registry=weather_registry)
 def get_weather_forecast(city: str) -> str:
     """Gets the weather forecast for a city"""
@@ -441,7 +447,14 @@ def get_stock_price(ticker: str) -> float:
     """Gets the current stock price"""
     return 100.0
 
-# Create specialized agents with their own tool sets
+# Common tool:
+@tool(tool_registry=[weather_registry, finance_registry])
+def common_tool(param: str) -> str:
+    """A common tool that should be available to both agents"""
+    return "common"
+
+
+# Create specialized agents with their own tool sets:
 weather_agent = BedrockConverseAgent(
     model_id="anthropic.claude-3-haiku-20240307-v1:0",
     tools=weather_registry,
