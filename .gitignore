@@ -4,6 +4,7 @@
 __pycache__/
 *.egg-info
 dist
+.env
 
 # Directory for local CDK context files
 .cdk.staging
@@ -31,3 +32,6 @@ node_modules/
 # Temporary files
 *.log
 *.swp
+
+# Amazon Q Developer settings and rules
+.amazonq

@@ -317,6 +317,73 @@ print(response) # Okay, let me get the current weather report for Amsterdam usin
 
 As you can see, tools that you've registered will be invoked automatically by the agent. The output from `converse` is always just a string with the agent's response to the user.
 
+##### Professional Tool Development with Pydantic
+
+For professional/production grade tool development, we recommend using Pydantic models to define your tool's interface. This approach provides several key benefits:
+
+1. **Strong Type Validation**: Pydantic enforces strict type checking and validation at runtime
+2. **Clear Interface Documentation**: Input/output schemas are automatically generated from your models. The LLM "reads" both the model's docstring and the `description` attributes of Pydantic Field objects to understand how to use the tool correctly. This natural language documentation helps the LLM make informed decisions about parameter values.
+3. **Error Handling with Self-Correction**: Built-in error handling and validation messages are fed back to the LLM, allowing it to understand what went wrong and self-correct its tool usage. For example, if the LLM provides an invalid value for a parameter, Pydantic's detailed error message helps the LLM understand why it was invalid and how to fix it in subsequent attempts.
+4. **Fine-grained Input Control**: Pydantic Field attributes like `pattern` allow you to enforce very specific requirements through regex patterns. For example, you can ensure a parameter only accepts certain string formats, numeric ranges, or specific enumerated values. The LLM understands these constraints from the Field descriptions and validates its choices accordingly.
+5. **Schema Evolution**: Easy to evolve your tool's interface while maintaining backward compatibility
+6. **OpenAPI Integration**: Automatic OpenAPI schema generation for documentation
+
+You can find a complete example in `examples/pydantic_tools/` that demonstrates this approach. The example implements a weather alerts tool with proper input validation, error handling, and response structuring:
+
+```python
+from pydantic import BaseModel, Field
+
+class WeatherAlertRequest(BaseModel):
+    """
+    Request parameters for the weather alerts tool.
+    """
+    area: Optional[str] = Field(
+        default=None,
+        description="State code (e.g., 'CA', 'TX') or zone/county code to filter alerts by area."
+    )
+    severity: Optional[str] = Field(
+        default=None,
+        description="Filter by severity level: 'Extreme', 'Severe', 'Moderate', 'Minor', or 'Unknown'.",
+        pattern="^(Extreme|Severe|Moderate|Minor|Unknown)$"
+    )
+
+class WeatherAlertsTool:
+    @property
+    def tool_spec(self) -> Dict[str, Any]:
+        """Tool specification is automatically generated from the Pydantic model."""
+        schema = WeatherAlertRequest.model_json_schema()
+        return {
+            "name": "get_weather_alerts",
+            "description": WeatherAlertRequest.__doc__,
+            "inputSchema": {"json": schema}
+        }
+
+    def invoke(self, **kwargs) -> Dict[str, Any]:
+        """
+        Invoke the weather alerts tool with validated parameters.
+        """
+        try:
+            request = WeatherAlertRequest(**kwargs)  # Validation happens here
+            return self._get_weather_alerts(request)
+        except ValidationError as e:
+            return {"error": str(e)}
+```
+
+Key advantages of this approach:
+
+1. **Input Validation**: The Pydantic model automatically validates all inputs, ensuring they match the expected types and patterns
+2. **Self-Documenting**: The model's fields and docstrings provide clear documentation that is used by both developers and the LLM
+3. **Type Safety**: Python type hints combined with Pydantic's runtime validation catch errors early
+4. **Maintainable**: Clear separation between validation logic (models) and business logic (tool implementation)
+5. **Testable**: Easy to write unit tests for both the models and the tool implementation
+6. **Extensible**: New fields can be added to the models without breaking existing code
+
+The example in `examples/pydantic_tools/` includes:
+
+- Complete tool implementation with Pydantic models
+- Integration with Generative AI Toolkit agent
+- Example usage patterns
+
 ##### Other tools
 
 If you don't want to register a Python function as tool, but have a tool with tool spec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
