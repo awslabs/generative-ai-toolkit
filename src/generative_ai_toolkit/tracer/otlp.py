@@ -45,12 +45,13 @@ from opentelemetry.proto.trace.v1.trace_pb2 import (
     Status as OtlpStatus,
 )
 
+from generative_ai_toolkit.tracer.trace import Trace
 from generative_ai_toolkit.tracer.tracer import (
     BaseTracer,
-    Trace,
     TraceContextProvider,
     TraceScope,
 )
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 
 @dataclass
@@ -148,7 +149,7 @@ class OtlpBatch:
         elif value is None:
             return OtlpAnyValue()
         else:
-            return OtlpAnyValue(string_value=json.dumps(value, default=str))
+            return OtlpAnyValue(string_value=json.dumps(value, cls=DefaultJsonEncoder))
 
     SPAN_KIND_PROTOBUF_MAPPING = {
         "SERVER": OtlpSpan.SpanKind.SPAN_KIND_SERVER,
@@ -190,21 +191,22 @@ class OtlpTracer(BaseTracer):
         self._send_protobuf(OtlpBatch([trace]).protobuf().SerializeToString())
 
     def _send_protobuf(self, body: bytes):
-        self.conn.request(
-            "POST",
-            "/v1/traces",
-            body=body,
-            headers={
-                "Content-Type": "application/x-protobuf",
-            },
-        )
-        response = self.conn.getresponse()
-
-        # Must read response, in order to be able to re-use connection
-        # Also, nice for potential error message
-        response_body = response.read()
-
-        if response.status != 200:
-            raise ValueError(
-                f"Failed to send batch: {response.status} {response.reason} {response_body.decode()}"
+        with self.lock:
+            self.conn.request(
+                "POST",
+                "/v1/traces",
+                body=body,
+                headers={
+                    "Content-Type": "application/x-protobuf",
+                },
             )
+            response = self.conn.getresponse()
+
+            # Must read response, in order to be able to re-use connection
+            # Also, nice for potential error message
+            response_body = response.read()
+
+            if response.status != 200:
+                raise ValueError(
+                    f"Failed to send batch: {response.status} {response.reason} {response_body.decode()}"
+                )

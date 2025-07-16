@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from IPython.core.getipython import get_ipython
+from generative_ai_toolkit.agent import registry
 
-
-def is_notebook():
-    try:
-
-        ipy = get_ipython()
-        if not ipy or not hasattr(ipy, "config") or "IPKernelApp" not in ipy.config:
-            return False
-    except ImportError:
-        return False
-    return True
+other_registry = registry.ToolRegistry([])

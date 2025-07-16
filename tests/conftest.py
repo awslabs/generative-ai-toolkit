@@ -27,7 +27,7 @@ def mock_bedrock_converse():
     mock = MockBedrockConverse()
     yield mock
     if mock.mock_responses:
-        raise Exception("Still have unconsumed mock responses")
+        raise Exception(f"Still have unconsumed mock responses ({len(mock.mock_responses)})")
 
 
 @pytest.fixture

@@ -24,14 +24,14 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version-file: "pyproject.toml"
+          python-version: "3.13"
 
       - name: Set AWS region (to prevent boto3 errors)
         run: |
           echo "AWS_DEFAULT_REGION=us-east-1" >> $GITHUB_ENV
           echo "AWS_REGION=us-east-1" >> $GITHUB_ENV
 
-      - run: uv pip install -e '.[all]'
-      - run: uv pip install pytest pytest-cov ruff
+      - run: uv pip install -e '.[dev]'
       - run: ruff check src tests examples
+      - run: playwright install
       - run: pytest --cov=src --cov-report=term-missing tests

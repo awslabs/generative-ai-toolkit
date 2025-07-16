@@ -52,14 +52,15 @@ class Ulid:
     def __eq__(self, other):
         return self.ulid == str(other)
 
+    def __hash__(self):
+        return hash(self.ulid)
+
     @cached_property
     def timestamp(self):
         if self._timestamp is None:
             timestamp_encoded = self.ulid[: self.TIMESTAMP_LENGTH]
             self._timestamp = self._decode_base32(timestamp_encoded)
-        timestamp_datetime = datetime.fromtimestamp(
-            self._timestamp / 1000, tz=UTC
-        )
+        timestamp_datetime = datetime.fromtimestamp(self._timestamp / 1000, tz=UTC)
         return timestamp_datetime
 
     @classmethod

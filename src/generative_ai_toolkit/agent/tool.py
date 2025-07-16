@@ -13,11 +13,9 @@
 # limitations under the License.
 
 import inspect
-import json
 import re
 import textwrap
 from collections.abc import Callable
-from datetime import date, datetime, time
 from types import UnionType
 from typing import (
     TYPE_CHECKING,
@@ -49,14 +47,6 @@ class Tool(Protocol):
         """
         ...
 
-
-class ToolResultJsonEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, date | datetime | time):
-            return o.isoformat()
-        elif hasattr(o, "__json__") and callable(o.__json__):
-            return o.__json__()
-        return super().default(o)
 
 
 class BedrockConverseTool(Tool):

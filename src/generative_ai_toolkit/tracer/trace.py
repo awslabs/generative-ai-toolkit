@@ -16,23 +16,46 @@ import copy
 import json
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import (
     Any,
     Literal,
     NamedTuple,
+    TypedDict,
 )
 
-deepcopy_lock = threading.Lock()
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
+
+LOCK = threading.Lock()
 IMMUTABLE_TYPES = (int, float, bool, str, type(None), tuple, frozenset)
 
 
-def thread_safe_deepcopy(obj):
+def thread_safe_deepcopy(obj, lock=LOCK):
     if isinstance(obj, IMMUTABLE_TYPES):
         return obj
-    with deepcopy_lock:
+    with lock:
         return copy.deepcopy(obj)
+
+
+class TraceScopeDict(TypedDict):
+    name: str
+    version: str
+
+
+class TraceDict(TypedDict):
+    span_name: str
+    trace_id: str
+    span_id: str
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
+    parent_span_id: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    duration_ms: int | None
+    attributes: Mapping[str, Any]
+    span_status: Literal["UNSET", "OK", "ERROR"]
+    resource_attributes: Mapping[str, Any]
+    scope: TraceScopeDict
 
 
 class Trace:
@@ -63,6 +86,7 @@ class Trace:
         span_status: Literal["UNSET", "OK", "ERROR"] = "UNSET",
         resource_attributes: Mapping[str, Any] | None = None,
         scope: "TraceScope | None" = None,
+        snapshot_handler: Callable[["Trace"], None] | None = None,
     ) -> None:
         self.span_name = span_name
         self.span_kind = span_kind
@@ -88,13 +112,59 @@ class Trace:
             else TraceScope("generative-ai-toolkit", "current")
         )
         self.span_status = span_status
+        self._snapshot_handler = snapshot_handler
+        self._deepcopy_lock = threading.Lock()
+        self._attributes_lock = threading.Lock()
+
+    def clone(self):
+        """
+        Return a stand-alone and flattened clone of the trace.
+
+        To avoid having to clone the entire chain of parent spans:
+        - The clone will only include a pointer to its direct parent
+        - That parent span will only have its name, span id and trace id set
+        - The clone's attributes field will include all inheritable attributes from its parents
+
+        For all intents and purposes, the clone will "look" the same as the original.
+        """
+        copied = type(self)(
+            span_name=self.span_name,
+            span_kind=self.span_kind,
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            parent_span=(
+                type(self)(
+                    span_name=self.parent_span.span_name,
+                    trace_id=self.parent_span.trace_id,
+                    span_id=self.parent_span.span_id,
+                )
+                if self.parent_span
+                else None
+            ),
+            started_at=self.started_at,
+            ended_at=self.ended_at,
+            attributes=dict(
+                thread_safe_deepcopy(self.attributes, lock=self._deepcopy_lock)
+            ),
+            span_status=self.span_status,
+            resource_attributes=thread_safe_deepcopy(
+                self.resource_attributes, lock=self._deepcopy_lock
+            ),
+            scope=self.scope,
+        )
+        return copied
+
+    def emit_snapshot(self):
+        if self._snapshot_handler:
+            self._snapshot_handler(self.clone())
 
     @property
     def attributes(self) -> Mapping[str, Any]:
-        attributes = self._attributes | self._inheritable_attributes
-        for parent in reversed(self.parents):
-            attributes.update(parent._inheritable_attributes)
-        return attributes
+        with self._attributes_lock:
+            attributes = self._attributes | self._inheritable_attributes
+            for parent in reversed(self.parents):
+                attributes.update(parent._inheritable_attributes)
+            return attributes
 
     @property
     def parents(self) -> list["Trace"]:
@@ -118,11 +188,14 @@ class Trace:
         *,
         inheritable=False,
     ) -> "Trace":
-        attribute_value = thread_safe_deepcopy(attribute_value)
-        self._attributes[attribute_key] = attribute_value
-        if inheritable:
-            self._inheritable_attributes[attribute_key] = attribute_value
-        return self
+        attribute_value = thread_safe_deepcopy(
+            attribute_value, lock=self._deepcopy_lock
+        )
+        with self._attributes_lock:
+            self._attributes[attribute_key] = attribute_value
+            if inheritable:
+                self._inheritable_attributes[attribute_key] = attribute_value
+            return self
 
     def __repr__(self) -> str:
         return (
@@ -141,7 +214,7 @@ class Trace:
             f")"
         )
 
-    def as_dict(self):
+    def as_dict(self) -> TraceDict:
         return {
             "span_name": self.span_name,
             "span_kind": self.span_kind,
@@ -150,6 +223,7 @@ class Trace:
             "parent_span_id": self.parent_span.span_id if self.parent_span else None,
             "started_at": self.started_at,
             "ended_at": self.ended_at if self.ended_at else None,
+            "duration_ms": self.duration_ms if self.ended_at else None,
             "attributes": self.attributes,
             "span_status": self.span_status,
             "resource_attributes": self.resource_attributes,
@@ -220,7 +294,7 @@ class Trace:
             )
         )
         attrs_str = " ".join(
-            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else json.dumps(v), 80) }"
+            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else v.get("principal_id", "unknown-principal") if k == "ai.auth.context" and isinstance(v, Mapping) else json.dumps(v, cls=DefaultJsonEncoder), 80) }"
             for k, v in important_attrs.items()
         )
 

@@ -48,7 +48,7 @@ class TraceContextProvider(Protocol):
     ) -> Callable[[], None]: ...
 
 
-class ContextVarTraceContextProvider:
+class ContextVarTraceContextProvider(TraceContextProvider):
     def __init__(self) -> None:
         self._context = ContextVar[TraceContext | None]("trace_context", default=None)
 

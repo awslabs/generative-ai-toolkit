@@ -12,21 +12,161 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import datetime
 import functools
 import html
 import json
+import re
 import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
+from threading import Event
+from typing import Literal
 
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
 
+from generative_ai_toolkit.agent import Agent
+from generative_ai_toolkit.context import AuthContext
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 from generative_ai_toolkit.tracer.trace import Trace
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
+
+
+def chat_ui(
+    agent: Agent,
+    show_traces_drop_down=True,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
+):
+
+    ensure_running_event_loop()
+
+    def user_submit(user_input: str):
+        return (
+            gr.update(
+                value="", interactive=False, submit_btn=False, stop_btn=True
+            ),  # clear textbox
+            user_input,
+            Event(),
+        )
+
+    def user_stop(stop_event: Event | None):
+        if stop_event:
+            stop_event.set()
+        return gr.update(stop_btn=False)
+
+    def assistant_stream(user_input: str, stop_event: Event | None):
+        if not user_input:
+            yield agent.traces
+            return
+        traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
+        for trace in agent.converse_stream(
+            user_input, stream="traces", stop_event=stop_event
+        ):
+            traces[trace.span_id] = trace
+            yield list(traces.values())
+
+    def traces_state_change(
+        traces: Iterable[Trace],
+        show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
+    ):
+        *_, messages = chat_messages_from_traces(traces, show_traces=show_traces)
+        return messages
+
+    def reset_agent():
+        agent.reset()
+        return (
+            gr.update(value=[], label=f"Conversation {agent.conversation_id}"),
+            [],
+        )
+
+    with gr.Blocks(
+        theme="origin", fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
+
+        show_traces_state = gr.State(value=show_traces)
+        traces_state = gr.State(value=[])
+        stop_event = gr.State(value=None)
+        last_user_input = gr.State("")
+
+        with gr.Row(visible=show_traces_drop_down):
+            gr.Markdown("")  # functions as spacer
+            trace_visibility_drop_down = gr.Dropdown(
+                choices=[
+                    ("Show conversation only", "CONVERSATION_ONLY"),
+                    ("Show core traces", "CORE"),
+                    ("Show all traces", "ALL"),
+                ],
+                value=show_traces,
+                label="Show traces",
+                filterable=False,
+                container=False,
+                scale=0,
+                min_width=250,
+            )
+
+        chatbot = gr.Chatbot(
+            type="messages",
+            height="75vh" if show_traces_drop_down else "80vh",
+            label=f"Conversation {agent.conversation_id}",
+        )
+
+        trace_visibility_drop_down.select(
+            lambda show_traces: show_traces,
+            inputs=[trace_visibility_drop_down],
+            outputs=[show_traces_state],
+        )
+
+        show_traces_state.change(
+            traces_state_change,
+            inputs=[traces_state, show_traces_state],
+            outputs=[chatbot],
+            show_progress="hidden",
+            show_progress_on=[],
+        )
+
+        msg = gr.Textbox(
+            placeholder="Type your message ...",
+            submit_btn=True,
+            autofocus=True,
+            show_label=False,
+            elem_id="user-input",
+        )
+
+        msg.submit(
+            user_submit,
+            inputs=[msg],
+            outputs=[msg, last_user_input, stop_event],
+        ).then(
+            assistant_stream,
+            inputs=[last_user_input, stop_event],
+            outputs=[traces_state],
+            show_progress="full",
+            show_progress_on=[chatbot],
+        ).then(
+            lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
+            outputs=[msg],
+        )
+
+        msg.stop(user_stop, inputs=[stop_event], outputs=[msg])
+
+        traces_state.change(
+            traces_state_change,
+            inputs=[traces_state, show_traces_state],
+            outputs=[chatbot],
+            show_progress="hidden",
+            show_progress_on=[],
+            queue=True,
+        )
+
+        chatbot.clear(reset_agent, outputs=[chatbot, traces_state])
+
+        demo.load(lambda: agent.traces, outputs=[traces_state])
+
+        return demo
 
 
 @dataclass
@@ -34,11 +174,12 @@ class TraceSummary:
     trace_id: str
     span_id: str
     started_at: datetime.datetime
-    duration_ms: int
+    duration_ms: int | None
     conversation_id: str
-    auth_context: str | None = None
+    auth_context: AuthContext = field(default_factory=lambda: {"principal_id": None})
     user_input: str = ""
     agent_response: str = ""
+    agent_cycle_responses: dict[int, str] = field(default_factory=dict)
     all_traces: list[Trace] = field(default_factory=list)
     measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
         default_factory=dict
@@ -56,12 +197,20 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
         root_trace = traces_for_trace_id[0]
         summary = TraceSummary(
             conversation_id=root_trace.attributes["ai.conversation.id"],
-            auth_context=root_trace.attributes.get("ai.auth.context"),
+            auth_context=root_trace.attributes["ai.auth.context"],
             trace_id=trace_id,
             span_id=root_trace.span_id,
-            duration_ms=root_trace.duration_ms,
+            duration_ms=root_trace.ended_at and root_trace.duration_ms,
             started_at=root_trace.started_at,
             all_traces=traces_for_trace_id,
+            agent_cycle_responses={
+                trace.attributes["ai.agent.cycle.nr"]: trace.attributes[
+                    "ai.agent.cycle.response"
+                ]
+                for trace in traces_for_trace_id
+                if trace.attributes.get("ai.trace.type") == "cycle"
+                and "ai.agent.cycle.response" in trace.attributes
+            },
         )
 
         # Find (first) user input:
@@ -95,26 +244,59 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     tool_input = attributes.pop("ai.tool.input")
     tool_output = attributes.pop("ai.tool.output", None)
     tool_error = attributes.pop("ai.tool.error", None)
-    res = textwrap.dedent(
-        """
-        **Input**
-        {tool_input}
-        """
-    ).format(tool_input=tool_input)
+    tool_error_traceback = attributes.pop("ai.tool.error.traceback", None)
+    res = (
+        textwrap.dedent(
+            """
+            ##### Input
+
+            ~~~json
+            {tool_input_json}
+            ~~~
+            """
+        )
+        .lstrip()
+        .format(
+            tool_input_json=json.dumps(tool_input, indent=2, cls=DefaultJsonEncoder)
+        )
+    )
     if tool_output:
         res += textwrap.dedent(
             """
-            **Output**
-            {tool_output}
+            ##### Output
+
             """
-        ).format(tool_output=tool_output)
-    if tool_error:
+        ).lstrip()
+        if isinstance(tool_output, str | float | int | bool):
+            res += textwrap.dedent(
+                """
+                ~~~
+                {tool_output_txt}
+                ~~~
+                """
+            ).format(tool_output_txt=tool_output)
+        else:
+            res += textwrap.dedent(
+                """
+                ~~~json
+                {tool_output_json}
+                ~~~
+                """
+            ).format(
+                tool_output_json=json.dumps(
+                    tool_output, indent=2, cls=DefaultJsonEncoder
+                )
+            )
+    if tool_error_traceback:
         res += textwrap.dedent(
             """
-            **Error**
-            {tool_error}
+            ##### Error
+
+            ~~~
+            {tool_error_text}
+            ~~~
             """
-        ).format(tool_error=tool_error)
+        ).format(tool_error_text=tool_error_traceback or str(tool_error))
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
@@ -122,11 +304,18 @@ def get_markdown_for_tool_invocation(tool_trace: Trace):
     if rest_attributes:
         res += textwrap.dedent(
             """
-            **Attributes**
+            ##### Other attributes
+
+            ~~~json
             {rest_attributes_json}
+            ~~~
             """
-        ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return html.escape(res)
+        ).format(
+            rest_attributes_json=json.dumps(
+                rest_attributes, indent=2, cls=DefaultJsonEncoder
+            )
+        )
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def get_markdown_for_llm_invocation(llm_trace: Trace):
@@ -137,7 +326,19 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
     tool_config = attributes.pop("ai.llm.request.tool.config", None)
     inference_config = attributes.pop("ai.llm.request.inference.config", None)
     output = attributes.pop("ai.llm.response.output", None)
-    res = textwrap.dedent(
+    error = attributes.pop("ai.llm.response.error", None)
+    res = ""
+    if error:
+        res += textwrap.dedent(
+            """
+            **Error**
+            {error}
+            """
+        ).format(
+            error=error,
+        )
+
+    res += textwrap.dedent(
         """
         **Inference Config**
         {inference_config}
@@ -186,16 +387,6 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             metrics=metrics,
         )
 
-    error = attributes.pop("ai.llm.response.error", None)
-    if error:
-        res += textwrap.dedent(
-            """
-            **Error**
-            {error}
-            """
-        ).format(
-            error=error,
-        )
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
@@ -206,8 +397,10 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
             **Attributes**
             {rest_attributes_json}
             """
-        ).format(rest_attributes_json=json.dumps(rest_attributes))
-    return html.escape(res)
+        ).format(
+            rest_attributes_json=json.dumps(rest_attributes, cls=DefaultJsonEncoder)
+        )
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def without(d: Mapping, keys: Sequence[str]):
@@ -238,10 +431,11 @@ def get_markdown_generic(trace: Trace):
                     "ai.auth.context",
                     "peer.service",
                 ],
-            )
+            ),
+            cls=DefaultJsonEncoder,
         ),
     )
-    return html.escape(res)
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
 
 
 def get_markdown_for_measurement(measurement: Measurement):
@@ -260,113 +454,161 @@ def get_markdown_for_measurement(measurement: Measurement):
             **Additional Info**
             {additional_info}
             """
-        ).format(additional_info=json.dumps(measurement.additional_info))
+        ).format(
+            additional_info=json.dumps(
+                measurement.additional_info, cls=DefaultJsonEncoder
+            )
+        )
     if measurement.dimensions:
         res += textwrap.dedent(
             """
             **Dimensions**
             {dimensions}
             """
-        ).format(dimensions=json.dumps(measurement.dimensions))
+        ).format(dimensions=json.dumps(measurement.dimensions, cls=DefaultJsonEncoder))
 
-    return html.escape(res)
+    return EscapeHtml.escape_html_except_code(res, code_fence_style="tilde")
+
+
+def repr_value(v):
+    if isinstance(v, str) and (v.startswith("https://") or v.startswith("http://")):
+        return f"<a href={v} target='_blank' rel='noopener noreferrer'>{v}</a>"
+    else:
+        return repr(v)
 
 
 def chat_messages_from_trace_summary(
     summary: TraceSummary,
     *,
-    include_all_traces=False,
+    include_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     include_measurements=False,
 ):
     chat_messages: list[gr.ChatMessage] = []
+    summary_duration: MetadataDict = (
+        {"duration": summary.duration_ms / 1000} if summary.duration_ms else {}
+    )
     chat_messages.append(
         gr.ChatMessage(
             role="user",
-            content=summary.user_input,
-            metadata={"title": "User", "duration": summary.duration_ms / 1000},
+            content=EscapeHtml.escape_html_except_code(
+                summary.user_input, code_fence_style="backtick"
+            ),
+            metadata={"title": "User", **summary_duration},
         ),
     )
-    for trace in summary.all_traces:
-        metadata: MetadataDict = {
-            "title": trace.attributes.get("peer.service", trace.span_name),
-            "duration": trace.duration_ms / 1000,
-            "id": trace.span_id,
-            "status": "done",
-        }
-        if "exception.message" in trace.attributes:
-            metadata.pop("status", None)
-        if trace.attributes.get("ai.trace.type") == "tool-invocation":
-            if "ai.tool.error" in trace.attributes:
-                metadata.pop("status", None)
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_tool_invocation(trace),
-                    metadata=metadata,
-                )
-            )
-        elif trace.attributes.get("ai.trace.type") == "llm-invocation":
-            if "ai.llm.response.error" in trace.attributes:
-                metadata.pop("status", None)
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_llm_invocation(trace),
-                    metadata=metadata,
-                )
-            )
-        elif include_all_traces:
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_generic(trace),
-                    metadata=metadata,
-                )
-            )
-        else:
-            continue  # skip including measurements for traces we don't show
-
-        if not include_measurements:
-            continue
-        for measurement in summary.measurements_per_trace.get(
-            (trace.trace_id, trace.span_id), []
-        ):
+    if include_traces != "CONVERSATION_ONLY":
+        for trace in summary.all_traces:
             metadata: MetadataDict = {
-                "title": f"Measurement: {measurement.name}{" [NOK]" if measurement.validation_passed is False else ""}",
-                "parent_id": trace.span_id,
+                "title": trace.attributes.get("peer.service", trace.span_name),
+                "id": trace.span_id,
+                "status": "done",
             }
-            if measurement.validation_passed is not False:
-                metadata["status"] = "done"
-            chat_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=get_markdown_for_measurement(measurement),
-                    metadata=metadata,
+            if trace.ended_at:
+                metadata["duration"] = trace.duration_ms / 1000
+            if "exception.message" in trace.attributes:
+                metadata.pop("status", None)
+            if trace.attributes.get("ai.trace.type") == "tool-invocation":
+                tool_input_str = " ".join(
+                    f"{k}={repr_value(v)}"
+                    for k, v in trace.attributes.get("ai.tool.input", {}).items()
                 )
-            )
-    chat_messages.append(
-        gr.ChatMessage(
-            role="assistant",
-            content=summary.agent_response,
-            metadata={
-                "title": "Assistant",
-                "duration": summary.duration_ms / 1000,
-                "id": summary.span_id,
-            },
-        )
-    )
+                if len(tool_input_str) > 300:
+                    tool_input_str = tool_input_str[:297] + "..."
+                metadata["title"] += f" [{tool_input_str}]"
+                if "ai.tool.error" in trace.attributes:
+                    metadata.pop("status", None)
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_tool_invocation(trace),
+                        metadata=metadata,
+                    )
+                )
+            elif trace.attributes.get("ai.trace.type") == "llm-invocation":
+                if "ai.llm.response.error" in trace.attributes:
+                    metadata.pop("status", None)
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_llm_invocation(trace),
+                        metadata=metadata,
+                    )
+                )
+                cycle_nr = trace.attributes["ai.agent.cycle.nr"]
+                cycle_agent_response = summary.agent_cycle_responses.get(cycle_nr)
+                if cycle_agent_response:
+                    chat_messages.append(
+                        gr.ChatMessage(
+                            role="assistant",
+                            content=EscapeHtml.escape_html_except_code(
+                                cycle_agent_response, code_fence_style="backtick"
+                            ),
+                            metadata={
+                                "title": "Assistant",
+                                "id": summary.span_id,
+                                **summary_duration,
+                            },
+                        )
+                    )
+            elif include_traces == "ALL":
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_generic(trace),
+                        metadata=metadata,
+                    )
+                )
+            else:
+                continue  # skip including measurements for traces we don't show
+
+            if not include_measurements:
+                continue
+            for measurement in summary.measurements_per_trace.get(
+                (trace.trace_id, trace.span_id), []
+            ):
+                metadata: MetadataDict = {
+                    "title": f"Measurement: {measurement.name}{" [NOK]" if measurement.validation_passed is False else ""}",
+                    "parent_id": trace.span_id,
+                }
+                if measurement.validation_passed is not False:
+                    metadata["status"] = "done"
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=get_markdown_for_measurement(measurement),
+                        metadata=metadata,
+                    )
+                )
+    else:
+        for cycle_agent_response in summary.agent_cycle_responses.values():
+            if cycle_agent_response:
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=EscapeHtml.escape_html_except_code(
+                            cycle_agent_response, code_fence_style="backtick"
+                        ),
+                        metadata={
+                            "title": "Assistant",
+                            "id": summary.span_id,
+                            **summary_duration,
+                        },
+                    )
+                )
     return chat_messages
 
 
 def chat_messages_from_traces(
     traces: Iterable[Trace],
-    show_all_traces=False,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
 ):
     traces = list(traces)
     if not traces:
         return None, None, []
     summaries = get_summaries_for_traces(traces)
-    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
+    conversations = {
+        (s.conversation_id, s.auth_context["principal_id"]) for s in summaries
+    }
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()
@@ -375,7 +617,7 @@ def chat_messages_from_traces(
         for summary in summaries
         for msg in chat_messages_from_trace_summary(
             summary,
-            include_all_traces=show_all_traces,
+            include_traces=show_traces,
         )
     ]
     return conversation_id, auth_context, messages
@@ -383,13 +625,15 @@ def chat_messages_from_traces(
 
 def chat_messages_from_conversation_measurements(
     conv_measurements: ConversationMeasurements,
-    show_all_traces=False,
+    show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     show_measurements=False,
 ):
     summaries = get_summaries_for_conversation_measurements(conv_measurements)
     if not summaries:
         return None, None, []
-    conversations = {(s.conversation_id, s.auth_context) for s in summaries}
+    conversations = {
+        (s.conversation_id, s.auth_context["principal_id"]) for s in summaries
+    }
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
     conversation_id, auth_context = conversations.pop()
@@ -398,7 +642,7 @@ def chat_messages_from_conversation_measurements(
         for summary in summaries
         for msg in chat_messages_from_trace_summary(
             summary,
-            include_all_traces=show_all_traces,
+            include_traces=show_traces,
             include_measurements=show_measurements,
         )
     ]
@@ -428,16 +672,20 @@ def traces_ui(
         traces,
     )
 
-    with gr.Blocks(fill_width=True, title="Generative AI Toolkit") as demo:
+    ensure_running_event_loop()
+
+    with gr.Blocks(
+        theme="origin", fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
         with gr.Row():
-            gr.Markdown(
-                f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
+            gr.Markdown("")  # functions as spacer
+            toggle_all_traces = gr.Button(
+                "Show all traces", scale=0, min_width=200, size="sm"
             )
-            toggle_all_traces = gr.Button("Show all traces", scale=0, min_width=200)
         chatbot = gr.Chatbot(
             type="messages",
             height="full",
-            label="Conversation",
+            label=f"Conversation {conversation_id}",
             value=messages,  # type: ignore
         )
 
@@ -446,7 +694,7 @@ def traces_ui(
             new_label = "Hide internal traces" if new_state else "Show all traces"
             *_, messages = chat_messages_from_traces(
                 traces,
-                show_all_traces=new_state,
+                show_traces="ALL" if new_state else "CORE",
             )
             return gr.update(value=new_label), new_state, messages
 
@@ -470,22 +718,23 @@ def measurements_ui(
 
     def show_conversation(
         conversation_index: int,
-        show_all_traces=False,
-        show_measurements=False,
+        show_all_traces: bool,
+        show_measurements: bool,
     ):
         conv_measurements = all_measurements[conversation_index]
 
         conversation_id, auth_context, messages = (
             chat_messages_from_conversation_measurements(
                 conv_measurements,
-                show_all_traces=show_all_traces,
+                show_traces="ALL" if show_all_traces else "CORE",
                 show_measurements=show_measurements,
             )
         )
-        header_text = (
-            f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
+        return (
+            gr.update(value=messages, label=f"Conversation {conversation_id}"),
+            gr.update(visible=False),
+            gr.update(visible=True),
         )
-        return header_text, messages, gr.update(visible=False), gr.update(visible=True)
 
     def go_back():
         return gr.update(visible=True), gr.update(visible=False)
@@ -520,7 +769,11 @@ def measurements_ui(
     }
     """
 
-    with gr.Blocks(css=css, fill_width=True, title="Generative AI Toolkit") as demo:
+    ensure_running_event_loop()
+
+    with gr.Blocks(
+        theme="origin", css=css, fill_width=True, title="Generative AI Toolkit"
+    ) as demo:
         with gr.Column(
             visible=True, elem_classes="genaitk-scroll-column"
         ) as parent_page:
@@ -718,12 +971,14 @@ def measurements_ui(
 
         with gr.Column(visible=False) as child_page:
             with gr.Row():
-                header = gr.Markdown("Conversation:")
-                toggle_all_traces = gr.Button("Show all traces", scale=0, min_width=200)
-                toggle_measurements = gr.Button(
-                    "Hide measurements", scale=0, min_width=200
+                gr.Markdown("")  # functions as spacer
+                toggle_all_traces = gr.Button(
+                    "Show all traces", scale=0, min_width=200, size="sm"
                 )
-                back_button = gr.Button("Back", scale=0, min_width=200)
+                toggle_measurements = gr.Button(
+                    "Hide measurements", scale=0, min_width=200, size="sm"
+                )
+                back_button = gr.Button("Back", scale=0, min_width=200, size="sm")
 
             chatbot = gr.Chatbot(
                 type="messages",
@@ -747,7 +1002,7 @@ def measurements_ui(
                     show_all_traces_toggle_state,
                     show_measurements_toggle_state,
                 ],
-                outputs=[header, chatbot, parent_page, child_page],
+                outputs=[chatbot, parent_page, child_page],
                 queue=False,
             )
 
@@ -772,7 +1027,7 @@ def measurements_ui(
                 show_all_traces_toggle_state,
                 show_measurements_toggle_state,
             ],
-            outputs=[header, chatbot, parent_page, child_page],
+            outputs=[chatbot, parent_page, child_page],
             queue=False,
         )
 
@@ -787,10 +1042,52 @@ def measurements_ui(
                 show_all_traces_toggle_state,
                 show_measurements_toggle_state,
             ],
-            outputs=[header, chatbot, parent_page, child_page],
+            outputs=[chatbot, parent_page, child_page],
             queue=False,
         )
 
         back_button.click(fn=go_back, inputs=[], outputs=[parent_page, child_page])
 
     return demo
+
+
+def ensure_running_event_loop():
+    """
+    Work-around for https://github.com/gradio-app/gradio/issues/11280
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+
+class EscapeHtml:
+
+    CODE_REGEXP_BACKTICK = re.compile(r"^```[\s\S]*?^```|`[^`]*`", re.MULTILINE)
+    CODE_REGEXP_TILDE = re.compile(r"^~~~[\s\S]*?^~~~|~[^~]*~", re.MULTILINE)
+    CODE_FENCE_REGEX_MAP = {
+        "backtick": CODE_REGEXP_BACKTICK,
+        "tilde": CODE_REGEXP_TILDE,
+    }
+
+    @classmethod
+    def escape_html_except_code(
+        cls,
+        text: str,
+        *,
+        code_fence_style: Literal["backtick", "tilde"],
+    ) -> str:
+        """
+        Escape HTML characters in the given text, except for code blocks (denoted by ```),
+        and inline code snippets (denoted by `), because gradio already escapes those.
+        """
+        result = []
+        last_end = 0
+
+        for m in cls.CODE_FENCE_REGEX_MAP[code_fence_style].finditer(text):
+            result.append(html.escape(text[last_end : m.start()]))
+            result.append(m.group(0))
+            last_end = m.end()
+        result.append(html.escape(text[last_end:]))
+        return "".join(result)

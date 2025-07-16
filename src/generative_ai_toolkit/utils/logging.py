@@ -31,6 +31,7 @@ from collections.abc import Mapping
 from typing import Any, TextIO
 
 from generative_ai_toolkit.utils.cloudwatch import MetricData
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 in_aws_lambda = os.environ.get("AWS_EXECUTION_ENV", "").startswith("AWS_Lambda_")
 
@@ -73,7 +74,7 @@ class SimpleLogger:
         # Replace line endings so multi-line log messages are still displayed as one record in CloudWatch Logs
         # Flush to stdout immediately (no need to set PYTHONUNBUFFERED)
         print(
-            json.dumps(fields, separators=(",", ":"), default=str).replace(
+            json.dumps(fields, separators=(",", ":"), cls=DefaultJsonEncoder).replace(
                 "\n",
                 "\r" if in_aws_lambda else "\n",  # no-op if not not in AWS Lambda
             ),

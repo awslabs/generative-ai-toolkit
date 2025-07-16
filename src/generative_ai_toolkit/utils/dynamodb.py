@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import json
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
-class DynamoDbMapper(json.JSONEncoder):
+
+class DynamoDbMapper(DefaultJsonEncoder):
     """
     Helper class to convert Decimal to float, which boto3 dynamodb doesn't do out of the box :(
     """
@@ -28,9 +29,7 @@ class DynamoDbMapper(json.JSONEncoder):
             if o.as_integer_ratio()[1] == 1:
                 return int(o)
             return float(o)
-        if isinstance(o, datetime):
-            return o.isoformat()
-        return str(o)
+        return super().default(o)
 
     @classmethod
     def to_dynamo(cls, data: Any) -> Any:

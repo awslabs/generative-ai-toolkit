@@ -452,6 +452,120 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
 
+##### Tool Registry
+
+You can organize and discover tools using the `ToolRegistry` and `@tool` decorator. Using the `@tool` decorator can be easier than importing and invoking `agent.register_tool()` for each tool individually.
+
+For example, let's say you have this in `my_tools/weather.py`:
+
+```python
+from generative_ai_toolkit.agent import registry
+
+# Use the decorator to register a function with the default tool registry:
+@registry.tool
+def get_weather(city: str) ->; str:
+    """Gets the current weather for a city"""
+    return f"Sunny in {city}"
+
+# More tools here, all decorated with @registry.tool
+# ...
+```
+
+You can then simply scan all modules under `my_tools` and add the tools therein to your agent like so:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.agent.registry import DEFAULT_TOOL_REGISTRY
+
+# You have to import the package with your tools
+# (this can just be a local folder with .py files)
+import my_tools
+
+# Then, use the registry to scan the package (and it's children, recursively) for tools:
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    tools=DEFAULT_TOOL_REGISTRY.scan_tools(my_tools),
+)
+```
+
+By default the `@tool` decorator adds tools to the `DEFAULT_TOOL_REGISTRY` but you can also add them to a custom registry. This can be convenient in a multi-agent scenario:
+
+```python
+from generative_ai_toolkit.agent.registry import ToolRegistry, tool
+
+# Create separate registries for different agents
+weather_registry = ToolRegistry()
+finance_registry = ToolRegistry()
+
+# Register tools with specific registries
+@tool(tool_registry=weather_registry)
+def get_weather_forecast(city: str) -> str:
+    """Gets the weather forecast for a city"""
+    return f"Sunny forecast for {city}"
+
+@tool(tool_registry=finance_registry)
+def get_stock_price(ticker: str) -> float:
+    """Gets the current stock price"""
+    return 100.0
+
+# Create specialized agents with their own tool sets
+weather_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+    tools=weather_registry,
+)
+
+finance_agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    tools=finance_registry,
+)
+```
+
+##### Agent Context in Tools
+
+Tools can access contextual information about the current agent execution through the `AgentContext` class. This enables tools to create detailed trace spans for better observability and debugging, and access authentication context to implement user-specific behavior:
+
+```python
+from generative_ai_toolkit.context import AgentContext
+
+def context_aware_tool(some_parameter: str) -> str:
+    """
+    A tool that demonstrates access to agent context
+
+    Parameters
+    ----------
+    some_parameter : str
+        Some parameter
+    """
+
+    # Access the current agent context:
+    context = AgentContext.current()
+
+    # Access conversation and authentication information:
+    conversation_id = context.conversation_id
+    principal_id = context.auth_context["principal_id"]
+    other_auth_data = context.auth_context["extra"]["other_auth_data"]
+
+    # Access the tracer to be able to use it from within the tool
+    # Add attributes to the current span:
+    current_trace = context.tracer.current_trace
+    current_trace.add_attribute("foo", "bar")
+
+    # Start a new span:
+    with context.tracer.trace("new-span") as trace:
+        ...
+
+    return "response"
+
+agent.register_tool(context_aware_tool)
+
+# Set context on your agent:
+agent.set_conversation_id("01J5D9ZNK5XKZX472HC81ZYR5Z")
+agent.set_auth_context(principal_id="john", extra={"other_auth_data":"foo"})
+
+# Now, when the agent invokes the tool during the conversation, the tool can access the context
+agent.converse("Hello!")
+```
+
 #### 2.2.5 Multi-Agent Support
 
 Agents can themselves be used as tool too. This allows you to build hierarchical multi-agent systems, where a supervisor agent can use specialized subordinate agents to delegate tasks to.
@@ -604,6 +718,7 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 | `ai.tool.input`                                        | The input parameters provided to the tool                                                                                                                                                         |
 | `ai.tool.output`                                       | The response/output from the tool invocation                                                                                                                                                      |
 | `ai.tool.error`                                        | Error information if tool invocation fails                                                                                                                                                        |
+| `ai.tool.error.traceback`                              | Full Python traceback information when tool invocation fails                                                                                                                                      |
 | `ai.user.input`                                        | The input provided by the user in the conversation                                                                                                                                                |
 | `ai.llm.request.inference.config`                      | Configuration settings for the LLM inference                                                                                                                                                      |
 | `ai.llm.request.messages`                              | Messages being sent to the LLM                                                                                                                                                                    |
@@ -624,6 +739,9 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 | `ai.llm.response.trace`                                | Trace information                                                                                                                                                                                 |
 | `ai.llm.response.performance.config`                   | The performance config                                                                                                                                                                            |
 | `ai.agent.response`                                    | The final concatenated response from the agent                                                                                                                                                    |
+| `ai.agent.cycle.nr`                                    | The cycle number during agent conversation processing, indicating which iteration of the conversation loop is being executed                                                                      |
+| `ai.agent.cycle.response`                              | The agent's response text for a specific cycle/iteration during conversation processing                                                                                                           |
+| `ai.conversation.aborted`                              | Boolean flag indicating whether the conversation was aborted due to a stop event                                                                                                                  |
 | `service.name`                                         | Name of the service, set to the class name of the agent                                                                                                                                           |
 
 ##### Viewing traces
@@ -701,6 +819,21 @@ Which would print e.g.:
 
 ```
 
+##### Streaming traces
+
+With `converse_stream()` you can iterate over traces in real-time, as they are produced by the agent and its tools. For this, set parameter `stream` to `traces`:
+
+```python
+for trace in agent.converse_stream("What's the capital of France?", stream="traces"):
+    print(trace)
+```
+
+In `traces` mode, `converse_stream()` yields `Trace` objects as they are generated during the conversation, allowing you to monitor and analyze the agent's behavior as it runs. Each trace contains information about a specific operation (such as LLM invocation, tool usage, etc.) with all relevant attributes like timestamps, inputs, outputs, and more.
+
+The stream includes both complete traces and trace snapshots. Snapshots represent intermediate traces that are still in progress and can be identified by checking if `trace.ended_at` is `None`.
+
+Streaming traces can be particularly useful for user-facing applications that want to display detailed progress incrementally (like the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations)).
+
 ##### Web UI
 
 You can view the traces for a conversation using the Generative AI Toolkit Web UI:
@@ -722,6 +855,8 @@ Stop the Web UI as follows:
 ```python
 demo.close()
 ```
+
+Note that you can also use the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations), which also shows traces.
 
 ##### DynamoDB example
 
@@ -1452,7 +1587,7 @@ class MyAgent(BedrockConverseAgent):
 
 Runner.configure(
     agent=MyAgent,  # Agent factory
-    auth_context_fn=lambda _: "TestUser",  # Add your own implementation here! See "Security" section below.
+    auth_context_fn=lambda _: {"principal_id":"TestUser"},  # Add your own implementation here! See "Security" section below.
 )
 ```
 
@@ -1468,7 +1603,7 @@ Make sure to tune concurrency. By default `gunicorn` runs with 1 worker (process
 gunicorn --workers 4 --threads 5 "path.to.agent:Runner()"
 ```
 
-#### Security: ensuring users access their own conversation history only
+#### Security: ensure users access their own conversation history only
 
 You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user.
 
@@ -1479,10 +1614,10 @@ In the simplest case, you would use the user ID as auth context. For example, if
 You can manually set the auth context on a `BedrockConverseAgent` instance like so (and this is propagated to the conversation history instance your agent uses):
 
 ```python
-agent.set_auth_context("<my-user-id>")
+agent.set_auth_context(principal_id="<my-user-id>")
 ```
 
-> If you use the `Runner` (see above) you don't have to call `agent.set_auth_context(...)` manually, but rather you should provide an `auth_context_fn`, which is explained in the next paragraph.
+> If you use the `Runner` (see above) you don't have to call `agent.set_auth_context(principal_id=...)` manually, but rather you should provide an `auth_context_fn`, which is explained in the next paragraph.
 
 > If you have custom needs, for example you want to allow some users, but not all, to share conversations, you likely need to implement a custom conversation history class to support your auth context scheme (e.g. you could subclass `DynamoDbConversationHistory` and customize the logic).
 
@@ -1504,12 +1639,134 @@ from flask import Request
 from generative_ai_toolkit.run.agent import Runner
 
 def extract_x_user_id_from_request(request: Request):
-    return request.headers["x-user-id"] # Make sure you can trust this header value!
+    user_id = request.headers["x-user-id"] # Make sure you can trust this header value!
+    return {"principal_id":user_id}
 
 Runner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
 ```
 
 > The `Runner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
+
+#### Security: ensure your tools operate with the right privileges
+
+Where relevant, your tools should use the `auth_context` within the `AgentContext` to determine the identity of the user (e.g. for authorization):
+
+```python
+from generative_ai_toolkit.context import AgentContext
+
+context = AgentContext.current()
+principal_id = context.auth_context["principal_id"]
+```
+
+To understand how to use this, let's consider the following example. Say you are building a chatbot (powered by an agent) for customers, that allows them to ask questions about their orders. Their orders are stored in a relational database, and you have implemented a tool for the agent, that provides access to that database. The agent should of course ensure that it will only share order information about each customer's own orders. Customers should not be able to access orders from other customers; i.e. we must prevent the agent from becoming a [confused deputy](https://en.wikipedia.org/wiki/Confused_deputy_problem).
+
+You could use [row level security (RLS)](https://www.postgresql.org/docs/current/ddl-rowsecurity.html) at database level, to ensure that each customer only "sees" their own rows, e.g. using a session variable `app.customer_id`. In that case, you should use the `AgentContext` class (see above) in your tool implementation to determine the right `principal_id` to use as `app.customer_id`:
+
+> This is NOT meant as exhaustive security guidance for implementing text-to-sql AI systems! This example is purely meant to explain how tools can use `AgentContext`.
+
+```python
+from generative_ai_toolkit.context import AgentContext
+import psycopg2
+
+def execute_sql(query: str) -> str:
+    """
+    Execute SQL query with row-level security based on user context
+
+    Parameters
+    ----------
+    query: str
+        The SQL query to execute
+    """
+    # Get the current agent context
+    context = AgentContext.current()
+    principal_id = context.auth_context["principal_id"]
+
+    if not principal_id:
+        raise ValueError("No authenticated user context available")
+
+    # Create custom trace for the database operation
+    with context.tracer.trace("database-query") as trace:
+        trace.add_attribute("db.query", query)
+        trace.add_attribute("db.user", principal_id)
+
+        # Connect to PostgreSQL
+        conn = psycopg2.connect(
+            host="your-db-host",
+            database="your-database",
+            user="my-agent-tool",  # A "system account" used by the tool
+            password="the-password"
+        )
+
+        try:
+            with conn.cursor() as cursor:
+                # Set the current user context for RLS
+                # This makes the principal_id available to RLS policies
+                cursor.execute(
+                    "SELECT set_config('app.customer_id', %s, false);", (principal_id,)
+                )
+                # Execute the user's query
+                cursor.execute(query)
+
+                # Fetch results
+                results = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+
+                # Format results as a readable string
+                if results:
+                    result_str = f"Columns: {', '.join(columns)}\n"
+                    for row in results:
+                        result_str += f"{dict(zip(columns, row))}\n"
+                    trace.add_attribute("db.rows_returned", len(results))
+                    return result_str
+                else:
+                    return "No results found"
+
+        finally:
+            conn.close()
+
+# Register the tool with your agent
+agent.register_tool(execute_sql)
+
+# Let's presume you have determined the customer ID somehow (e.g. from their login),
+# and you will use this as `principal_id`:
+agent.set_auth_context(principal_id="<the-customer-id>")
+
+# Let's presume the user asks this (in reality, via a webform or so):
+agent.converse("What is the combined amount of my orders?")
+
+# When the agent now uses the tool, RLS will be enforced.
+```
+
+Example corresponding Postgres RLS setup:
+
+```sql
+-- Create a table with user-specific data
+CREATE TABLE customer_orders (
+    id SERIAL PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    order_details TEXT,
+    amount DECIMAL(10,2),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Enable RLS on the table
+ALTER TABLE customer_orders ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policy that only applies to SELECT operations
+CREATE POLICY customer_orders_select_policy ON customer_orders
+    FOR SELECT  -- Only applies to SELECT queries
+    USING (customer_id = current_setting('app.customer_id'));
+
+-- Grant permissions to the application user
+GRANT SELECT ON customer_orders TO app_user;
+GRANT USAGE ON SEQUENCE customer_orders_id_seq TO app_user;
+
+-- Insert some test data
+INSERT INTO customer_orders (customer_id, order_details, amount) VALUES
+    ('user123', 'Order for laptop', 1299.99),
+    ('user456', 'Order for books', 45.50),
+    ('user123', 'Order for mouse', 25.99);
+```
 
 ### 2.9 Web UI for Conversation Debugging
 
@@ -1546,6 +1803,30 @@ This command runs a local web server (at http://localhost:7860) where you can in
 ```python
 results.ui.close()
 ```
+
+#### Chat UI for interactive agent conversations
+
+The Generative AI Toolkit also provides an interactive interface for chatting with your agent:
+
+```python
+from generative_ai_toolkit.ui import chat_ui
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    system_prompt="You are a helpful assistant"
+)
+
+# Register any tools as needed
+agent.register_tool(my_tool_function)
+
+# Create and launch the chat UI
+demo = chat_ui(agent)
+demo.launch(inbrowser=True)
+```
+
+This interactive UI is meant for development and testing phases, to quickly iterate on your agent's capabilities and see how it responds to different user inputs.
+
+<img src="./assets/images/ui-chat.png" alt="UI Chat Interface Screenshot" title="UI Chat Interface" width="1200"/>
 
 ### 2.10 Mocking and Testing
 
@@ -1696,6 +1977,62 @@ Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam
 Expect(agent.traces).agent_text_response.to_include("20")
 ```
 
+#### Dynamic Response Generation
+
+In addition to preparing responses ahead of time, the `MockBedrockConverse` class also supports dynamically generating responses on-the-fly using the `response_generator` parameter:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+# Create a mock instance
+mock = MockBedrockConverse()
+
+# Define a function that will generate responses based on the request
+def response_generator(mock_instance, request):
+    # Extract user message from the request
+    if "messages" in request and request["messages"]:
+        content = user_message = request["messages"][-1]["content"][0]
+        if "text" in content:
+            user_message = content["text"]
+            if "weather" in user_message.lower():
+                mock_instance.add_output(
+                    text_output=["Let me check the weather for you."],
+                    tool_use_output=[{"name": "weather_tool", "input": {"city": "Seattle"}}]
+                )
+            else:
+                mock_instance.add_output(text_output=["I'm not sure how to respond to that"])
+        elif "toolResult" in content:
+            tool_result = content["toolResult"]["content"][0]["json"]
+            mock_instance.add_output(text_output=tool_result["toolResponse"])
+
+mock.response_generator = response_generator
+
+def weather_tool(city: str) -> str:
+    """
+    Get the weather forecast for a city
+
+    Parameters
+    ---
+    city : str
+      The city
+    """
+    return f"The weather in {city} is sunny."
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    session=mock.session()
+)
+agent.register_tool(weather_tool)
+
+# Now when we converse with the agent, the response_generator
+# will dynamically create responses based on the input
+response = agent.converse("What's the weather like in Seattle?")
+print(response) # "The weather in Seattle is sunny."
+```
+
+The response generator is only invoked when there are no prepared responses available (i.e. those added with `mock.add_output()`). If there are prepared responses available, those will be used first.
+
 #### Usage with Pytest
 
 Here's a Pytest example:
@@ -1805,7 +2142,7 @@ Note: only local MCP servers (that communicate over `stdio`) are supported curre
 
 #### Chat loop
 
-To chat with your MCP client, call `chat()`. This will start a REPL chat:
+To chat with your MCP client, call `chat()`. This will start the [chat UI for interactive agent conversations](#chat-ui-for-interactive-agent-conversations) with your MCP client:
 
 ```python
 mcp_client.chat()
@@ -1814,11 +2151,7 @@ mcp_client.chat()
 ```
 MCP server configuration loaded: mcp.json
 
-MCP client ready. Type /q to quit. Type /t to list the available tools.
-
-You: /t
-
-Listing available tools:
+Registered tools:
 
   current_weather
   _______________
@@ -1827,18 +2160,20 @@ Listing available tools:
 
     This tool is already aware of the user's location, so you don't need to provide it.
 
-You: How's the weather?
-Assistant: It's currently sunny and 27 degrees Celsius outside.
+Running MCP client at http://127.0.0.1:7860/
 
-You: /q
-Assistant: Goodbye!
+Press CTRL-C to quit.
 ```
+
+The browser will open automatically and you can start chatting with the MCP client.
+
+##### Customize chat loop
 
 You can customize the chat loop by providing your own loop function:
 
 ```python
-def my_chat_loop(agent: Agent):
-    while True:
+def my_chat_fn(agent: Agent, stop_event: Event):
+    while not stop_event.is_set():
         user_input = input("Awesome user: ")
         if not user_input:
             break
@@ -1850,10 +2185,120 @@ def my_chat_loop(agent: Agent):
 And then:
 
 ```python
-mcp_client.chat(chat_loop=my_chat_loop)
+mcp_client.chat(chat_fn=my_chat_fn)
 ```
 
 ```
 Awesome user:
 
 ```
+
+#### MCP Server Tool Verification
+
+You can provide a verification function when instantiating the `McpClient` to validate tool descriptions and names from MCP servers, before they are registered with the agent.
+
+This is useful in cases such as:
+
+- You may have added MCP servers that have very different tools than what you were expecting
+- The MCP server might have been extended over time, and now has more tools available than when you originally added the server, which warrants a review
+- The MCP server's tools have poor descriptions; the LLM that backs the MCP client might get confused and could try to use the tools for purposes other than what they actually do
+
+Many MCP client implementations ask the user for explicit approval each time, or the first time, they use a tool. While that works, using a programmatic verification of MCP server tools is useful too, to counter e.g. alert fatigue.
+
+**IMPORTANT**: it's still perfectly possible that MCP server tools do something utterly different from what their description says. That is another problem, which isn't solved by the functionality described here.
+
+Below is an example to show how MCP server tool verification works. In the example we use an Amazon Bedrock Guardrail to check that each tool's description matches up with the intent of the user for adding the MCP server.
+
+The example assumes that the user added their expectation of the MCP server to the MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "WeatherForecasts": {
+      "expectation": "Gets the current weather for the user",
+      "command": "python3",
+      "args": ["mcp_server_get_weather.py"],
+      "env": {
+        "WEATHER": "Sunny",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}
+```
+
+Here's how to use the `verify_mcp_server_tool()` function to test that the MCP server's actual tools (that will be discovered using the MCP protocol) align with that expectation:
+
+```python
+import boto3
+
+bedrock = boto3.client("bedrock-runtime")
+
+GUARDRAIL_ID = "your-guardrail-id"
+GUARDRAIL_VERSION = "1"
+
+def verify_mcp_server_tool(*, mcp_server_config, tool_spec):
+    tool_expectation = mcp_server_config.expectation
+    tool_description = tool_spec["description"]
+
+    request = {
+        "guardrailIdentifier": GUARDRAIL_ID,
+        "guardrailVersion": GUARDRAIL_VERSION,
+        "source": "OUTPUT",
+        "content": [
+            {"text": {"text": tool_description, "qualifiers": ["grounding_source"]}},
+            {
+                "text": {
+                    "text": "A user asked a question. What does this tool do to help the assistant respond?",
+                    "qualifiers": ["query"],
+                }
+            },
+            {"text": {"text": tool_expectation, "qualifiers": ["guard_content"]}},
+        ],
+        "outputScope": "FULL",
+    }
+
+    response = bedrock_client.apply_guardrail(**request)
+
+    for assessment in response.get("assessments", []):
+        for f in assessment.get("contextualGroundingPolicy", {}).get("filters", []):
+            if f.get("action") == "BLOCKED":
+                message = textwrap.dedent(
+                    """
+                    Guardrail blocked tool {tool_name} from being used: {score} on {type}
+
+                    Tool description:
+
+                        {tool_description}
+
+                    User provided expectation:
+
+                        {tool_expectation}
+                    """
+                ).strip().format(
+                    tool_name=tool_spec["name"],
+                    tool_description=tool_description.replace("\n", " "),
+                    tool_expectation=tool_expectation,
+                    score=f.get("score"),
+                    type=f.get("type"),
+                    response=response
+                )
+                raise ValueError(
+                    message
+                )
+
+# Create agent as usual:
+agent = BedrockConverseAgent(
+    system_prompt="You are a helpful assistant",
+    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+)
+
+# Pass the verification function to the McpClient:
+mcp_client = McpClient(
+    agent,
+    client_config_path="/path/to/mcp.json",
+    verify_mcp_server_tool=verify_mcp_server_tool
+)
+```
+
+The verification function can be asynchronous or synchronous (in which case it's run threaded). If any MCP server tool verification fails, the MCP client will fail to initialize.

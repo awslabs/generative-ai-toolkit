@@ -6,7 +6,8 @@
       "env": {
         "WEATHER": "Sunny",
         "FASTMCP_LOG_LEVEL": "ERROR"
-      }
+      },
+      "expectation": "I will use this tool to check the weather"
     }
   }
 }

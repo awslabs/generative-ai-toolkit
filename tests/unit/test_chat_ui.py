@@ -12,15 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from IPython.core.getipython import get_ipython
+
+import pytest
+
+from generative_ai_toolkit.ui import chat_ui
 
 
-def is_notebook():
+@pytest.fixture
+def mock_agent1_chat_ui(mock_agent_1):
+    demo = chat_ui(mock_agent_1)
     try:
+        _, url, _ = demo.launch(prevent_thread_lock=True, quiet=True)
+        yield url
+    finally:
+        demo.close()
 
-        ipy = get_ipython()
-        if not ipy or not hasattr(ipy, "config") or "IPKernelApp" not in ipy.config:
-            return False
-    except ImportError:
-        return False
-    return True
+
+def test_gradio_ui(page, mock_bedrock_converse, mock_agent1_chat_ui):
+    mock_bedrock_converse.add_output("Hello, human!")
+    page.goto(mock_agent1_chat_ui)
+    page.fill("#user-input textarea", "Hello, assistant!")
+    page.press("#user-input textarea", "Enter")
+    page.wait_for_selector('.bot .message .message-content p:has-text("Hello, human")')

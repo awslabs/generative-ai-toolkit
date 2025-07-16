@@ -12,15 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from IPython.core.getipython import get_ipython
+
+import json
+from datetime import date, datetime, time
+from types import SimpleNamespace
 
 
-def is_notebook():
-    try:
+class DefaultJsonEncoder(json.JSONEncoder):
+    """
+    A JSON encoder that is a bit more smart, and lenient, than Python's native JSON encoder
+    """
 
-        ipy = get_ipython()
-        if not ipy or not hasattr(ipy, "config") or "IPKernelApp" not in ipy.config:
-            return False
-    except ImportError:
-        return False
-    return True
+    def default(self, o):
+        if isinstance(o, date | datetime | time):
+            return o.isoformat()
+        if isinstance(o, SimpleNamespace):
+            return o.__dict__
+        elif hasattr(o, "__json__") and callable(o.__json__):
+            return o.__json__()
+        return str(o)

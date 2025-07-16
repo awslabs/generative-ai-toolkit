@@ -24,6 +24,7 @@ from typing import (
 from flask import Flask, Request, Response, request
 from pydantic import BaseModel, Field
 
+from generative_ai_toolkit.context import AuthContext
 from generative_ai_toolkit.utils.logging import logger
 
 
@@ -33,14 +34,16 @@ class Runnable(Protocol):
 
     def set_conversation_id(self, conversation_id: str) -> None: ...
 
-    def set_auth_context(self, auth_context: str | None) -> None: ...
+    def set_auth_context(
+        self, **auth_context: Unpack[AuthContext]
+    ) -> None: ...
 
     def reset(self) -> None: ...
 
     def converse_stream(self, user_input: str) -> Iterable[str]: ...
 
 
-AuthContextFn = Callable[[Request], str | None]
+AuthContextFn = Callable[[Request], AuthContext]
 
 
 class RunnerConfig(TypedDict, total=False):
@@ -48,10 +51,11 @@ class RunnerConfig(TypedDict, total=False):
     auth_context_fn: AuthContextFn
 
 
-def iam_auth_context_fn(request: Request):
+def iam_auth_context_fn(request: Request) -> AuthContext:
     try:
         amzn_request_context = json.loads(request.headers["x-amzn-request-context"])
-        return amzn_request_context["authorizer"]["iam"]["userId"]
+        principal_id = amzn_request_context["authorizer"]["iam"]["userId"]
+        return {"principal_id": principal_id, "extra": amzn_request_context}
     except Exception as e:
         raise Exception("Missing AWS IAM Auth context") from e
 
@@ -114,7 +118,7 @@ class _Runner:
 
             try:
                 auth_context = self.auth_context_fn(request)
-                agent.set_auth_context(auth_context)
+                agent.set_auth_context(**auth_context)
             except Exception as err:
                 logger.warn(f"Forbidden: {err}")
                 return Response("Forbidden", status=403)
@@ -147,7 +151,7 @@ class _Runner:
             return Response(
                 chunked_response(),
                 status=200,
-                content_type="text/plain",
+                content_type="text/plain; charset=utf-8",
                 headers={
                     "x-conversation-id": agent.conversation_id,
                     "transfer-encoding": "chunked",
