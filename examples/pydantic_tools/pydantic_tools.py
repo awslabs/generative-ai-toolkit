@@ -13,22 +13,23 @@ express or implied. See the License for the specific language governing
 permissions and limitations under the License.
 """
 
-"""
-Example runner for Pydantic-based LLM tools with Generative AI Toolkit.
+###
+# Example runner for Pydantic-based LLM tools with Generative AI Toolkit.
 
-This module demonstrates how to:
-1. Create a Generative AI Toolkit agent
-2. Register a Pydantic-based tool (WeatherAlertsTool)
-3. Process natural language requests through the agent
-4. Handle tool responses in a conversational context
+# This module demonstrates how to:
+# 1. Create a Generative AI Toolkit agent
+# 2. Register a Pydantic-based tool (WeatherAlertsTool)
+# 3. Process natural language requests through the agent
+# 4. Handle tool responses in a conversational context
 
-The examples show how the agent understands user intent and uses the tool appropriately.
-"""
+# The examples show how the agent understands user intent and uses the tool appropriately.
+###
+
+from weather_tool import WeatherAlertsTool
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
-from generative_ai_toolkit.tracer import InMemoryTracer
 from generative_ai_toolkit.conversation_history import InMemoryConversationHistory
-from weather_tool import WeatherAlertsTool
+from generative_ai_toolkit.tracer import InMemoryTracer
 
 
 def process_user_request(agent: BedrockConverseAgent, user_input: str) -> None:

@@ -13,15 +13,15 @@ express or implied. See the License for the specific language governing
 permissions and limitations under the License.
 """
 
-"""
-Pydantic data models for the weather alerts tool.
+###
+# Pydantic data models for the weather alerts tool.
 
-This module defines the Pydantic models used for input validation and response
-structuring in the weather alerts tool. These models provide strong typing,
-validation rules, and documentation for the tool's inputs and outputs.
-"""
+# This module defines the Pydantic models used for input validation and response
+# structuring in the weather alerts tool. These models provide strong typing,
+# validation rules, and documentation for the tool's inputs and outputs.
+###
 
-from typing import Optional, List
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -48,52 +48,52 @@ class WeatherAlertRequest(BaseModel):
     - Get confirmed severe alerts: WeatherAlertRequest(severity="Severe", certainty="Observed", message_type="alert")
     """
 
-    area: Optional[str] = Field(
+    area: str | None = Field(
         default=None,
         description="State code (e.g., 'CA', 'TX') or zone/county code to filter alerts by area.",
     )
 
-    region_type: Optional[str] = Field(
+    region_type: str | None = Field(
         default=None,
         description="Type of region to filter by: 'area' (state), 'zone', or 'county'.",
         pattern="^(area|zone|county)$",
     )
 
-    status: Optional[str] = Field(
+    status: str | None = Field(
         default=None,
         description="Filter by alert status: 'actual', 'exercise', 'system', 'test', or 'draft'.",
         pattern="^(actual|exercise|system|test|draft)$",
     )
 
-    message_type: Optional[str] = Field(
+    message_type: str | None = Field(
         default=None,
         description="Filter by message type: 'alert', 'update', or 'cancel'.",
         pattern="^(alert|update|cancel)$",
     )
 
-    event: Optional[str] = Field(
+    event: str | None = Field(
         default=None,
         description="Filter by event type (e.g., 'Tornado', 'Flood', 'Severe Thunderstorm').",
     )
 
-    code: Optional[str] = Field(
+    code: str | None = Field(
         default=None,
         description="Filter by specific event code.",
     )
 
-    urgency: Optional[str] = Field(
+    urgency: str | None = Field(
         default=None,
         description="Filter by urgency level: 'Immediate', 'Expected', 'Future', 'Past', or 'Unknown'.",
         pattern="^(Immediate|Expected|Future|Past|Unknown)$",
     )
 
-    severity: Optional[str] = Field(
+    severity: str | None = Field(
         default=None,
         description="Filter by severity level: 'Extreme', 'Severe', 'Moderate', 'Minor', or 'Unknown'.",
         pattern="^(Extreme|Severe|Moderate|Minor|Unknown)$",
     )
 
-    certainty: Optional[str] = Field(
+    certainty: str | None = Field(
         default=None,
         description="Filter by certainty level: 'Observed', 'Likely', 'Possible', 'Unlikely', or 'Unknown'.",
         pattern="^(Observed|Likely|Possible|Unlikely|Unknown)$",
@@ -119,18 +119,18 @@ class Alert(BaseModel):
     id: str = Field(description="Unique identifier for the alert.")
     area_desc: str = Field(description="Description of the affected area.")
     event: str = Field(description="Type of weather event.")
-    headline: Optional[str] = Field(default=None, description="Alert headline.")
+    headline: str | None = Field(default=None, description="Alert headline.")
     description: str = Field(description="Detailed description of the alert.")
-    instruction: Optional[str] = Field(
+    instruction: str | None = Field(
         default=None, description="Instructions for the public."
     )
     severity: str = Field(description="Severity level of the alert.")
     urgency: str = Field(description="Urgency level of the alert.")
     certainty: str = Field(description="Certainty level of the alert.")
-    effective: Optional[str] = Field(
+    effective: str | None = Field(
         default=None, description="When the alert becomes effective."
     )
-    onset: Optional[str] = Field(
+    onset: str | None = Field(
         default=None, description="When the event is expected to begin."
     )
     expires: str = Field(description="When the alert expires.")
@@ -161,25 +161,25 @@ class WeatherAlertResponse(BaseModel):
         description="Whether the weather alerts request completed successfully."
     )
 
-    alerts: Optional[List[Alert]] = Field(
+    alerts: list[Alert] | None = Field(
         default=None,
         description="List of active weather alerts matching the request criteria.",
     )
 
-    alert_count: Optional[int] = Field(
+    alert_count: int | None = Field(
         default=None,
         description="Number of alerts returned.",
     )
 
-    processing_time_ms: Optional[int] = Field(
+    processing_time_ms: int | None = Field(
         default=None, description="Time taken to process the request in milliseconds."
     )
 
-    message: Optional[str] = Field(
+    message: str | None = Field(
         default=None,
         description="Additional information about the request results.",
     )
 
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None, description="Error message if the request failed."
     )

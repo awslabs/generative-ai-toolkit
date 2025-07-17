@@ -13,27 +13,28 @@ express or implied. See the License for the specific language governing
 permissions and limitations under the License.
 """
 
-"""
-Implementation of a weather alerts tool using Pydantic models.
+###
+# Implementation of a weather alerts tool using Pydantic models.
 
-This module implements a tool for fetching active weather alerts from the National
-Weather Service API. It demonstrates:
+# This module implements a tool for fetching active weather alerts from the National
+# Weather Service API. It demonstrates:
 
-1. Using Pydantic models for input/output validation
-2. Implementing a tool that follows the Generative AI Toolkit interface
-3. Proper API integration with error handling
-4. Clear tool specifications for LLM consumption
+# 1. Using Pydantic models for input/output validation
+# 2. Implementing a tool that follows the Generative AI Toolkit interface
+# 3. Proper API integration with error handling
+# 4. Clear tool specifications for LLM consumption
 
-The tool can filter alerts by various criteria such as area, event type, urgency,
-and severity, making it useful for weather-related queries from LLM agents.
-"""
+# The tool can filter alerts by various criteria such as area, event type, urgency,
+# and severity, making it useful for weather-related queries from LLM agents.
+###
 
 import time
+from typing import Any
+
 import requests
-from typing import Any, Dict
 
 # Import models from models.py
-from models import WeatherAlertRequest, WeatherAlertResponse, Alert
+from models import Alert, WeatherAlertRequest, WeatherAlertResponse
 
 
 class WeatherAlertsTool:
@@ -57,7 +58,7 @@ class WeatherAlertsTool:
         )
 
     @property
-    def tool_spec(self) -> Dict[str, Any]:
+    def tool_spec(self) -> dict[str, Any]:
         """
         Get the tool specification for the weather alerts tool.
 
@@ -73,7 +74,7 @@ class WeatherAlertsTool:
             "inputSchema": {"json": schema},
         }
 
-    def invoke(self, **kwargs) -> Dict[str, Any]:
+    def invoke(self, **kwargs) -> dict[str, Any]:
         """
         Invoke the weather alerts tool.
 
