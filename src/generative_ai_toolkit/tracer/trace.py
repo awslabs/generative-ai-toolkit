@@ -161,13 +161,17 @@ class Trace:
     @property
     def attributes(self) -> Mapping[str, Any]:
         with self._attributes_lock:
-            attributes = self._attributes | self._inheritable_attributes
-            for parent in reversed(self.parents):
-                attributes.update(parent._inheritable_attributes)
-            return attributes
+            inherited: dict[str, Any] = {}
+            for trace in [*reversed(self.parents), self]:
+                inherited.update(trace._inheritable_attributes)
+            return inherited | self._attributes
 
     @property
     def parents(self) -> list["Trace"]:
+        """
+        The parent traces, in proximity order, nearest parent first:
+        [parent, grandparent, great-grandparent]
+        """
         parents = []
         current_parent = self.parent_span
         while current_parent:
@@ -275,10 +279,19 @@ class Trace:
                 "ai.trace.type",
                 "peer.service",
                 "ai.conversation.id",
-                "ai.auth.context",
             ]
             if attr_name in attributes
         }
+        if "ai.auth.context" in attributes:
+            important_attrs["ai.auth.context"] = (
+                attributes["ai.auth.context"].get("principal_id", "unknown-principal")
+                if isinstance(attributes["ai.auth.context"], Mapping)
+                else "unknown-principal"
+            )
+        attrs_str = " ".join(
+            f"{k}={v if type(v) in (int, bool, float) or v is None else truncate(v if type(v) is str else json.dumps(v, cls=DefaultJsonEncoder), 80) }"
+            for k, v in important_attrs.items()
+        )
 
         span_kind_color = (
             RED
@@ -293,18 +306,18 @@ class Trace:
                 else GREEN if self.span_kind == "SERVER" else BLUE
             )
         )
-        attrs_str = " ".join(
-            f"{k}={v if type(v) in (int, bool, float) else truncate(v if type(v) is str else v.get("principal_id", "unknown-principal") if k == "ai.auth.context" and isinstance(v, Mapping) else json.dumps(v, cls=DefaultJsonEncoder), 80) }"
-            for k, v in important_attrs.items()
-        )
 
         # Base output
         start_time = self.started_at.isoformat(timespec="milliseconds").replace(
             "+00:00", "Z"
         )
+
+        agent_name = attributes.get("ai.agent.name") or self.resource_attributes.get(
+            "service.name"
+        )
         result = (
             f"{BLUE}[{self.trace_id}/{self.parent_span.span_id if self.parent_span else 'root'}/{self.span_id}]{RESET} "
-            f"{CYAN}{self.resource_attributes.get("service.name","<missing service.name>")}{RESET} "
+            f"{CYAN}{agent_name or "<missing service.name>"}{RESET} "
             f"{span_kind_color}{self.span_kind}{RESET} "
             f"{start_time} - {self.span_name}"
             f"\n{f'  {YELLOW}{attrs_str}{RESET}' if attrs_str else ''}"
@@ -324,6 +337,12 @@ class Trace:
             if llm_response:
                 result += (
                     f"\n{GRAY}{truncate_multiline("Response", llm_response)}{RESET}"
+                )
+
+            stop_reason = attributes.get("ai.llm.response.stop.reason")
+            if stop_reason:
+                result += (
+                    f"\n{GRAY}{truncate_multiline("Stop reason", stop_reason)}{RESET}"
                 )
 
             if error := attributes.get("ai.llm.response.error"):
@@ -350,6 +369,16 @@ class Trace:
             if agent_response is not None:
                 result += (
                     f"\n{GRAY}{truncate_multiline("Response",agent_response)}{RESET}"
+                )
+
+            if error := attributes.get("exception.message"):
+                result += f"\n{RED}{truncate_multiline("Error", error)}{RESET}"
+
+        elif trace_type == "cycle":
+            cycle_response = attributes.get("ai.agent.cycle.response")
+            if cycle_response is not None:
+                result += (
+                    f"\n{GRAY}{truncate_multiline("Response",cycle_response)}{RESET}"
                 )
 
             if error := attributes.get("exception.message"):

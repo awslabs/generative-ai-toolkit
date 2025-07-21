@@ -601,10 +601,37 @@ PassFail = _PassFail()
 
 
 class Expect:
-    def __init__(self, traces: Sequence[Trace]) -> None:
+
+    _at: int
+    _traces: Sequence[Trace]
+    _traces_per_parent_span_id: Mapping[str | None, Sequence[Trace]]
+    _parent_span_ids: Sequence[str | None]
+
+    def __init__(self, traces: Sequence[Trace], at=0) -> None:
         if not traces:
             raise ValueError("traces must not be an empty list")
-        self.traces = traces
+        self._at = at
+        self._traces_per_parent_span_id = {}
+
+        self._traces = sorted(traces, key=lambda trace: trace.started_at)
+        self._parent_span_ids = list(dict.fromkeys(
+            trace.attributes.get("ai.agent.hierarchy.parent.span.id")
+            for trace in self._traces
+        ))
+        for parent_span_id in self._parent_span_ids:
+            self._traces_per_parent_span_id[parent_span_id] = [
+                trace
+                for trace in self._traces
+                if trace.attributes.get("ai.agent.hierarchy.parent.span.id")
+                == parent_span_id
+            ]
+
+    def at(self, _at: int) -> "Expect":
+        return Expect(self._traces, _at)
+
+    @property
+    def traces(self):
+        return self._traces_per_parent_span_id[self._parent_span_ids[self._at]]
 
     @property
     def user_input(self):
@@ -617,7 +644,7 @@ class Expect:
             for trace in self.traces
             if "ai.user.input" in trace.attributes
         ]
-        return _StringAssertor(user_inputs)
+        return _StringAssertor(user_inputs, at=0)
 
     @property
     def agent_text_response(self):

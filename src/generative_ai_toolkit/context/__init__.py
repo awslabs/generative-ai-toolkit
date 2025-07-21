@@ -17,6 +17,7 @@
 
 
 import contextvars
+from threading import Event
 from typing import Any, NotRequired, TypedDict
 
 from generative_ai_toolkit.tracer import Tracer
@@ -41,8 +42,19 @@ class AgentContext:
     _current = contextvars.ContextVar["AgentContext"]("agent_context")
 
     conversation_id: str
+    """The conversation ID"""
+
     tracer: Tracer
+    """The tracer that is used by the agent; tools can use it for adding their own traces"""
+
     auth_context: AuthContext
+    """The auth context; tools can use it for enforcing authentication and authorization"""
+
+    stop_event: Event
+    """
+    Stop event (threading) that may be set by the user to signal abortion; tools that run for a longer span of time
+    should consult the stop event regularly (`stop_event.is_set()`) and abort early if it is set
+    """
 
     def __init__(
         self,
@@ -50,13 +62,18 @@ class AgentContext:
         conversation_id: str,
         tracer: Tracer,
         auth_context: AuthContext,
+        stop_event: Event | None,
     ) -> None:
         self.conversation_id = conversation_id
         self.tracer = tracer
         self.auth_context = auth_context
+        self.stop_event = stop_event or Event()
 
     @classmethod
-    def current(cls):
+    def current(cls) -> "AgentContext":
+        """
+        Access the current agent context from within a tool invocation
+        """
         return cls._current.get()
 
     def copy_context(self):

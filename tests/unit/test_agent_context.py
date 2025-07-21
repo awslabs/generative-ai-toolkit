@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+from threading import Event
+
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.context import AgentContext, AuthContext
 from generative_ai_toolkit.tracer.trace import Trace
@@ -157,3 +160,91 @@ def test_tools_can_access_agent_context_multi_tool(mock_bedrock_converse):
                 break
         else:
             raise Exception(f"Did not find test span {span_name} in traces!")
+
+
+def test_stop_event(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+
+    def dummy_tool() -> int:
+        """
+        Returns a static string
+        """
+        context = AgentContext.current()
+        iterations = 0
+        while not context.stop_event.is_set():
+            iterations += 1
+            time.sleep(0.1)
+        return iterations
+
+    agent.register_tool(dummy_tool)
+
+    mock_bedrock_converse.add_output(
+        tool_use_output={"name": "dummy_tool", "input": {}}
+    )
+
+    stop_event = Event()
+    for trace in agent.converse_stream(
+        "Go do it", stop_event=stop_event, stream="traces"
+    ):
+        if trace.attributes.get("ai.trace.type") == "tool-invocation":
+            if not trace.ended_at:
+                time.sleep(0.2)
+                stop_event.set()
+            else:
+                assert trace.attributes["ai.tool.output"] > 0
+
+    assert agent.traces[0].attributes.get("ai.conversation.aborted") is True
+
+
+def test_stop_event_multi_agent(mock_bedrock_converse):
+    supervisor_mock = mock_bedrock_converse.__class__()
+    subagent_mock = mock_bedrock_converse.__class__()
+    supervisor = BedrockConverseAgent(
+        model_id="dummy", session=supervisor_mock.session()
+    )
+    subagent = BedrockConverseAgent(
+        model_id="dummy",
+        session=subagent_mock.session(),
+        name="subagent",
+        description="Subagent",
+    )
+
+    supervisor.register_tool(subagent)
+
+    def dummy_tool() -> int:
+        """
+        Returns a static string
+        """
+        context = AgentContext.current()
+        iterations = 0
+        while not context.stop_event.is_set():
+            iterations += 1
+            time.sleep(0.1)
+        return iterations
+
+    subagent.register_tool(dummy_tool)
+
+    supervisor_mock.add_output(
+        tool_use_output=[
+            {"name": "subagent", "input": {"user_input": "Go do it subagent"}}
+        ]
+    )
+    subagent_mock.add_output(tool_use_output={"name": "dummy_tool", "input": {}})
+
+    stop_event = Event()
+    for trace in supervisor.converse_stream(
+        "Go do it supervisor", stop_event=stop_event, stream="traces"
+    ):
+        if (
+            trace.attributes.get("ai.trace.type") == "tool-invocation"
+            and trace.attributes["ai.tool.name"] == "dummy_tool"
+        ):
+            if not trace.ended_at:
+                time.sleep(0.2)
+                stop_event.set()
+            else:
+                assert trace.attributes["ai.tool.output"] > 0
+
+    assert supervisor.traces[0].attributes.get("ai.conversation.aborted") is True

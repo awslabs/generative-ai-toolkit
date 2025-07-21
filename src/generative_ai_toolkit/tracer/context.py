@@ -29,6 +29,7 @@ class TraceContextUpdate(TypedDict, total=False):
     span: Trace | None
     scope: TraceScope
     resource_attributes: Mapping[str, Any]
+    span_attributes: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,7 @@ class TraceContext:
     span: Trace | None = None
     scope: TraceScope | None = None
     resource_attributes: Mapping[str, Any] = field(default_factory=dict)
+    span_attributes: Mapping[str, Any] = field(default_factory=dict)
 
 
 class TraceContextProvider(Protocol):
@@ -69,6 +71,11 @@ class ContextVarTraceContextProvider(TraceContextProvider):
                 update["resource_attributes"]
                 if "resource_attributes" in update
                 else old_context.resource_attributes
+            ),
+            span_attributes=(
+                update["span_attributes"]
+                if "span_attributes" in update
+                else old_context.span_attributes
             ),
         )
         token = self._context.set(new_context)

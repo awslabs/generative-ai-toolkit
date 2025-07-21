@@ -16,17 +16,12 @@ from generative_ai_toolkit.ui import chat_messages_from_traces
 
 
 def test_chat_messages_from_traces_converse(mock_multi_agent):
-    [
-        supervisor,
-        events_agent,
-        weather_agent,
-        supervisor_mock,
-        events_agent_mock,
-        weather_agent_mock,
-    ] = mock_multi_agent
+    supervisor = mock_multi_agent.supervisor
+    weather = mock_multi_agent.weather
+    events = mock_multi_agent.events
 
     def populate_mock():
-        supervisor_mock.add_output(
+        supervisor.mock.add_output(
             tool_use_output=[
                 {
                     "name": "transfer_to_weather_agent",
@@ -38,38 +33,38 @@ def test_chat_messages_from_traces_converse(mock_multi_agent):
                 },
             ]
         )
-        weather_agent_mock.add_output(
+        weather.mock.add_output(
             tool_use_output=[
                 {"name": "get_weather", "input": {"city": "Amsterdam"}},
             ]
         )
-        weather_agent_mock.add_output(
+        weather.mock.add_output(
             text_output=["The weather in Amsterdam will be Sunny"],
         )
-        events_agent_mock.add_output(
+        events.mock.add_output(
             tool_use_output=[
                 {"name": "get_events", "input": {"city": "Amsterdam"}},
             ]
         )
-        events_agent_mock.add_output(
+        events.mock.add_output(
             text_output=["These are the coming events in Amsterdam: bla bla bla"],
         )
-        supervisor_mock.add_output(
+        supervisor.mock.add_output(
             text_output=[
                 "The weather in Amsterdam will be Sunny and the coming events are bla bla bla"
             ]
         )
 
-    for method in [supervisor.converse, supervisor.converse_stream]:
-        supervisor.reset()
+    for method in [supervisor.agent.converse, supervisor.agent.converse_stream]:
+        supervisor.agent.reset()
         populate_mock()
         list(method("I want to go to Amsterdam, what is up there?"))
 
         *_, messages = chat_messages_from_traces(
-            supervisor.traces,
+            supervisor.agent.traces,
         )
 
-        assert len(messages) == 6
+        assert len(messages) == 16
         text = messages[-1].content
         assert (
             type(text) is str

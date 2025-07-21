@@ -178,8 +178,7 @@ class TraceSummary:
     conversation_id: str
     auth_context: AuthContext = field(default_factory=lambda: {"principal_id": None})
     user_input: str = ""
-    agent_response: str = ""
-    agent_cycle_responses: dict[int, str] = field(default_factory=dict)
+    agent_cycle_traces: dict[str, Trace] = field(default_factory=dict)
     all_traces: list[Trace] = field(default_factory=list)
     measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
         default_factory=dict
@@ -194,6 +193,11 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
         by_trace_id, key=lambda t: t.trace_id
     ):
         traces_for_trace_id = list(traces_for_trace_id_iter)
+        root_agent_traces = [
+            trace
+            for trace in traces_for_trace_id
+            if "ai.agent.hierarchy.parent.span.id" not in trace.attributes
+        ]
         root_trace = traces_for_trace_id[0]
         summary = TraceSummary(
             conversation_id=root_trace.attributes["ai.conversation.id"],
@@ -203,25 +207,17 @@ def get_summaries_for_traces(traces: Sequence[Trace]):
             duration_ms=root_trace.ended_at and root_trace.duration_ms,
             started_at=root_trace.started_at,
             all_traces=traces_for_trace_id,
-            agent_cycle_responses={
-                trace.attributes["ai.agent.cycle.nr"]: trace.attributes[
-                    "ai.agent.cycle.response"
-                ]
+            agent_cycle_traces={
+                trace.span_id: trace
                 for trace in traces_for_trace_id
                 if trace.attributes.get("ai.trace.type") == "cycle"
-                and "ai.agent.cycle.response" in trace.attributes
             },
         )
 
         # Find (first) user input:
-        for trace in traces_for_trace_id:
+        for trace in root_agent_traces:
             if not summary.user_input and "ai.user.input" in trace.attributes:
                 summary.user_input = trace.attributes["ai.user.input"]
-
-        # Find (last) agent response:
-        for trace in reversed(traces_for_trace_id):
-            if not summary.agent_response and "ai.agent.response" in trace.attributes:
-                summary.agent_response = trace.attributes["ai.agent.response"]
 
         trace_summaries.append(summary)
     return sorted(trace_summaries, key=lambda t: t.started_at)
@@ -477,6 +473,22 @@ def repr_value(v):
         return repr(v)
 
 
+def get_metadata(trace: Trace):
+    # Populate Metadata
+    metadata: MetadataDict = {
+        "title": trace.attributes.get("peer.service", trace.span_name),
+        "id": trace.span_id,
+        "status": "done",  # Else message will show expanded
+    }
+    if trace.ended_at:
+        metadata["duration"] = trace.duration_ms / 1000
+    if "exception.message" in trace.attributes:
+        metadata.pop("status", None)
+    if "ai.agent.hierarchy.parent.span.id" in trace.attributes:
+        metadata["parent_id"] = trace.attributes["ai.agent.hierarchy.parent.span.id"]
+    return metadata
+
+
 def chat_messages_from_trace_summary(
     summary: TraceSummary,
     *,
@@ -498,32 +510,57 @@ def chat_messages_from_trace_summary(
     )
     if include_traces != "CONVERSATION_ONLY":
         for trace in summary.all_traces:
-            metadata: MetadataDict = {
-                "title": trace.attributes.get("peer.service", trace.span_name),
-                "id": trace.span_id,
-                "status": "done",
-            }
-            if trace.ended_at:
-                metadata["duration"] = trace.duration_ms / 1000
-            if "exception.message" in trace.attributes:
+            metadata = get_metadata(trace)
+
+            ####
+            # Chat Messages
+            ####
+
+            # Subagent input:
+            if (
+                trace.attributes.get("ai.trace.type") in {"converse", "converse-stream"}
+                and "ai.agent.hierarchy.parent.span.id" in trace.attributes
+                and "ai.user.input" in trace.attributes
+            ):
+                metadata["title"] = "Input"
                 metadata.pop("status", None)
-            if trace.attributes.get("ai.trace.type") == "tool-invocation":
-                tool_input_str = " ".join(
-                    f"{k}={repr_value(v)}"
-                    for k, v in trace.attributes.get("ai.tool.input", {}).items()
-                )
-                if len(tool_input_str) > 300:
-                    tool_input_str = tool_input_str[:297] + "..."
-                metadata["title"] += f" [{tool_input_str}]"
-                if "ai.tool.error" in trace.attributes:
-                    metadata.pop("status", None)
                 chat_messages.append(
                     gr.ChatMessage(
                         role="assistant",
-                        content=get_markdown_for_tool_invocation(trace),
+                        content=trace.attributes["ai.user.input"],
                         metadata=metadata,
                     )
                 )
+
+            # Tool invocations
+            elif trace.attributes.get("ai.trace.type") == "tool-invocation":
+                if "ai.tool.error" in trace.attributes:
+                    metadata.pop("status", None)
+                if "ai.tool.subagent" in trace.attributes:
+                    metadata["title"] = f"subagent:{trace.attributes['ai.tool.name']}"
+                    if not trace.ended_at:
+                        metadata["status"] = "pending"
+                else:
+                    tool_input_str = " ".join(
+                        f"{k}={repr_value(v)}"
+                        for k, v in trace.attributes.get("ai.tool.input", {}).items()
+                    )
+                    if len(tool_input_str) > 300:
+                        tool_input_str = tool_input_str[:297] + "..."
+                    metadata["title"] += f" [{tool_input_str}]"
+                chat_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=(
+                            get_markdown_for_tool_invocation(trace)
+                            if "ai.tool.subagent" not in trace.attributes
+                            else ""
+                        ),
+                        metadata=metadata,
+                    )
+                )
+
+            # LLM invocations
             elif trace.attributes.get("ai.trace.type") == "llm-invocation":
                 if "ai.llm.response.error" in trace.attributes:
                     metadata.pop("status", None)
@@ -534,22 +571,33 @@ def chat_messages_from_trace_summary(
                         metadata=metadata,
                     )
                 )
-                cycle_nr = trace.attributes["ai.agent.cycle.nr"]
-                cycle_agent_response = summary.agent_cycle_responses.get(cycle_nr)
-                if cycle_agent_response:
+                cycle_response = next(
+                    (
+                        summary.agent_cycle_traces[parent_trace.span_id].attributes.get(
+                            "ai.agent.cycle.response"
+                        )
+                        for parent_trace in trace.parents
+                        if parent_trace.span_id in summary.agent_cycle_traces
+                    ),
+                    None,
+                )
+                if cycle_response:
+                    metadata = metadata.copy()
+                    metadata.pop("status", None)
                     chat_messages.append(
                         gr.ChatMessage(
                             role="assistant",
                             content=EscapeHtml.escape_html_except_code(
-                                cycle_agent_response, code_fence_style="backtick"
+                                cycle_response, code_fence_style="backtick"
                             ),
                             metadata={
+                                **metadata,
                                 "title": "Assistant",
-                                "id": summary.span_id,
-                                **summary_duration,
                             },
                         )
                     )
+
+            # Other trace types
             elif include_traces == "ALL":
                 chat_messages.append(
                     gr.ChatMessage(
@@ -580,18 +628,22 @@ def chat_messages_from_trace_summary(
                     )
                 )
     else:
-        for cycle_agent_response in summary.agent_cycle_responses.values():
-            if cycle_agent_response:
+        for trace in summary.agent_cycle_traces.values():
+            if "ai.agent.hierarchy.parent.span.id" in trace.attributes:
+                continue  # Skip responses from subagents
+            agent_response = trace.attributes.get("ai.agent.cycle.response")
+            if agent_response:
+                metadata = get_metadata(trace)
+                metadata.pop("status", None)
                 chat_messages.append(
                     gr.ChatMessage(
                         role="assistant",
                         content=EscapeHtml.escape_html_except_code(
-                            cycle_agent_response, code_fence_style="backtick"
+                            agent_response, code_fence_style="backtick"
                         ),
                         metadata={
+                            **metadata,
                             "title": "Assistant",
-                            "id": summary.span_id,
-                            **summary_duration,
                         },
                     )
                 )

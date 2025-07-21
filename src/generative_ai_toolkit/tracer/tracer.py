@@ -18,7 +18,7 @@ import threading
 import traceback
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from functools import wraps
 from queue import Queue, ShutDown
@@ -231,6 +231,8 @@ class ContextAwareSpanPersistor:
             resource_attributes=self.resource_attributes or context.resource_attributes,
             snapshot_handler=self.snapshot_handler,
         )
+        for k, v in context.span_attributes.items():
+            self.trace.add_attribute(k, v)
         self._reset = self.trace_context.set_context(span=self.trace)
         return self.trace
 
@@ -395,6 +397,8 @@ class ChainableTracer(Tracer, Protocol):
 
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer": ...
 
+    def temporary_tracer(self, tracer: Tracer) -> AbstractContextManager[None]: ...
+
 
 class TeeTracer(BaseTracer, ChainableTracer):
 
@@ -427,6 +431,14 @@ class TeeTracer(BaseTracer, ChainableTracer):
 
         return self  # allow chaining remove_tracer() calls
 
+    @contextmanager
+    def temporary_tracer(self, tracer: Tracer):
+        self.add_tracer(tracer)
+        try:
+            yield
+        finally:
+            self.remove_tracer(tracer)
+
     def persist(self, trace: Trace):
         for tracer in self._tracers:
             tracer.persist(trace)
@@ -448,21 +460,16 @@ class TeeTracer(BaseTracer, ChainableTracer):
         )
 
 
-class IterableTracer(BaseTracer):
-    """
-    Threadsafe tracer that allows you to iterate over incoming traces.
-    The iteration can by stopped by signalling `shutdown()`.
-    This tracer can e.g. be used for tracing one "turn", i.e. one invocation of converse_stream()
-    """
-
+class QueueTracer(BaseTracer):
     def __init__(
         self,
         maxsize: int = -1,
         trace_context_provider: TraceContextProvider | None = None,
+        queue: Queue | None = None,
     ):
         super().__init__(trace_context_provider)
         self.snapshot_enabled = True
-        self.queue = Queue(maxsize)
+        self.queue = queue or Queue(maxsize)
 
     def __enter__(self):
         return self
@@ -479,6 +486,14 @@ class IterableTracer(BaseTracer):
 
     def persist_snapshot(self, trace: Trace):
         self.queue.put(trace)
+
+
+class IterableTracer(QueueTracer):
+    """
+    Threadsafe tracer that allows you to iterate over incoming traces.
+    The iteration can by stopped by signalling `shutdown()`.
+    This tracer can e.g. be used for tracing one "turn", i.e. one invocation of converse_stream()
+    """
 
     def __iter__(self):
         while True:

@@ -12,8 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
+
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+
+@dataclass
+class AgentMockCombination:
+    agent: BedrockConverseAgent
+    mock: MockBedrockConverse
+
+
+@dataclass
+class MultiAgent:
+    supervisor: AgentMockCombination
+    weather: AgentMockCombination
+    events: AgentMockCombination
 
 
 def multi_agent():
@@ -76,11 +91,8 @@ def multi_agent():
     supervisor.register_tool(weather_agent)
     supervisor.register_tool(events_agent)
 
-    return [
-        supervisor,
-        events_agent,
-        weather_agent,
-        supervisor_mock,
-        events_agent_mock,
-        weather_agent_mock,
-    ]
+    return MultiAgent(
+        AgentMockCombination(supervisor, supervisor_mock),
+        AgentMockCombination(weather_agent, weather_agent_mock),
+        AgentMockCombination(events_agent, events_agent_mock),
+    )
