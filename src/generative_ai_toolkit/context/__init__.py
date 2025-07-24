@@ -86,7 +86,7 @@ class AgentContext:
         cls,
         *,
         conversation_id: str = "test",
-        auth_context: AuthContext = AuthContext(principal_id="test"),
+        auth_context: AuthContext | None = None,
         tracer: Tracer | None = None,
         stop_event: Event | None = None,
     ) -> "AgentContext":
@@ -112,10 +112,16 @@ class AgentContext:
             The configured test context that has been set as current
         """
 
+        agent_auth_context = auth_context
+        if auth_context is not None:
+            agent_auth_context = auth_context.copy()
+        else:
+            agent_auth_context = AuthContext(principal_id="test")
+
         context = cls(
             conversation_id=conversation_id,
             tracer=tracer or NoopTracer(),
-            auth_context=auth_context,
+            auth_context=agent_auth_context,
             stop_event=stop_event,
         )
         cls._current.set(context)
