@@ -110,16 +110,12 @@ class AgentContext:
             The configured test context that has been set as current
         """
 
-        agent_auth_context = auth_context
-        if auth_context is not None:
-            agent_auth_context = auth_context.copy()
-        else:
-            agent_auth_context = AuthContext(principal_id="test")
-
         context = cls(
             conversation_id=conversation_id,
             tracer=tracer or NoopTracer(),
-            auth_context=agent_auth_context,
+            auth_context=(
+                auth_context.copy() if auth_context else AuthContext(principal_id="test")
+            ),
             stop_event=stop_event,
         )
         cls._current.set(context)
