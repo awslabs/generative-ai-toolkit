@@ -248,3 +248,46 @@ def test_stop_event_multi_agent(mock_bedrock_converse):
                 assert trace.attributes["ai.tool.output"] > 0
 
     assert supervisor.traces[0].attributes.get("ai.conversation.aborted") is True
+
+
+def test_set_test_context_defaults():
+    """Test set_test_context with default values"""
+    context = AgentContext.set_test_context()
+
+    assert context.conversation_id == "test"
+    assert context.auth_context["principal_id"] == "test"
+    assert "extra" not in context.auth_context
+    assert context.stop_event is not None
+
+    # Verify it's set as current
+    current = AgentContext.current()
+    assert current is context
+
+
+def test_set_test_context_custom_values():
+    """Test set_test_context with custom values"""
+    context = AgentContext.set_test_context(
+        conversation_id="custom-conversation",
+        principal_id="custom-user",
+        auth_context_extra={"role": "admin"}
+    )
+
+    assert context.conversation_id == "custom-conversation"
+    assert context.auth_context["principal_id"] == "custom-user"
+    assert context.auth_context["extra"] == {"role": "admin"}
+
+    # Verify it's set as current
+    current = AgentContext.current()
+    assert current is context
+
+
+def test_tool_using_test_context():
+    """Test that tools can use the test context"""
+    def example_tool(message: str) -> str:
+        context = AgentContext.current()
+        return f"User {context.auth_context['principal_id']} says: {message}"
+
+    AgentContext.set_test_context(principal_id="test-user")
+    result = example_tool("Hello")
+
+    assert result == "User test-user says: Hello"

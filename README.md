@@ -606,6 +606,40 @@ for trace in agent.converse_stream("Hello again!", stop_event=stop_event):
 stop_event.set()
 ```
 
+##### Testing Tools that Use AgentContext
+
+When testing tools that depend on `AgentContext.current()`, you can use the `set_test_context()` helper method to set up test fixtures:
+
+```python
+import pytest
+from generative_ai_toolkit.context import AgentContext
+
+@pytest.fixture
+def agent_context():
+    return AgentContext.set_test_context()
+
+# Or with custom values:
+@pytest.fixture
+def custom_agent_context():
+    return AgentContext.set_test_context(
+        conversation_id="test-conversation",
+        principal_id="test-user",
+        auth_context_extra={"role": "admin"}
+    )
+
+# Example tool that uses context
+def example_tool(message: str) -> str:
+    """Example tool that accesses agent context"""
+    context = AgentContext.current()
+    return f"User {context.auth_context['principal_id']} says: {message}"
+
+# Test using the fixture
+def test_tool_with_context(agent_context):
+    result = example_tool("Hello")
+    assert "test" in result
+    assert "Hello" in result
+```
+
 #### 2.2.5 Multi-Agent Support
 
 Agents can themselves be used as tool too. This allows you to build hierarchical multi-agent systems, where a supervisor agent can use specialized subordinate agents to delegate tasks to.
