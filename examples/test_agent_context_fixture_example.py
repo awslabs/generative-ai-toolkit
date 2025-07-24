@@ -19,7 +19,7 @@ permissions and limitations under the License.
 
 import pytest
 
-from generative_ai_toolkit.context import AgentContext
+from generative_ai_toolkit.context import AgentContext, AuthContext
 
 
 # Simple pytest fixture using the helper function
@@ -33,8 +33,7 @@ def agent_context():
 def custom_agent_context():
     return AgentContext.set_test_context(
         conversation_id="custom-test-id",
-        principal_id="user123",
-        auth_context_extra={"role": "admin"}
+        auth_context=AuthContext(principal_id="user123"),
     )
 
 

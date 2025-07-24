@@ -268,13 +268,14 @@ def test_set_test_context_custom_values():
     """Test set_test_context with custom values"""
     context = AgentContext.set_test_context(
         conversation_id="custom-conversation",
-        principal_id="custom-user",
-        auth_context_extra={"role": "admin"}
+        auth_context=AuthContext(
+            principal_id="custom-user", extra={"role": "admin"}
+        ),
     )
 
     assert context.conversation_id == "custom-conversation"
     assert context.auth_context["principal_id"] == "custom-user"
-    assert context.auth_context["extra"] == {"role": "admin"}
+    assert context.auth_context["extra"] == {"role": "admin"} # type: ignore
 
     # Verify it's set as current
     current = AgentContext.current()
@@ -287,7 +288,7 @@ def test_tool_using_test_context():
         context = AgentContext.current()
         return f"User {context.auth_context['principal_id']} says: {message}"
 
-    AgentContext.set_test_context(principal_id="test-user")
+    AgentContext.set_test_context(auth_context=AuthContext(principal_id="test-user"))
     result = example_tool("Hello")
 
     assert result == "User test-user says: Hello"

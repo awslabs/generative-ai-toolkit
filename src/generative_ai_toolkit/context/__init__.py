@@ -86,8 +86,7 @@ class AgentContext:
         cls,
         *,
         conversation_id: str = "test",
-        principal_id: str = "test",
-        auth_context_extra: Any = None,
+        auth_context: AuthContext = AuthContext(principal_id="test"),
         tracer: Tracer | None = None,
         stop_event: Event | None = None,
     ) -> "AgentContext":
@@ -112,9 +111,6 @@ class AgentContext:
         AgentContext
             The configured test context that has been set as current
         """
-        auth_context = AuthContext(principal_id=principal_id)
-        if auth_context_extra is not None:
-            auth_context["extra"] = auth_context_extra
 
         context = cls(
             conversation_id=conversation_id,
