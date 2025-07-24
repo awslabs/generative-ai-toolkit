@@ -61,22 +61,22 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 
 ## Table of Contents
 
-2.1 [Installation](#21-installation)  
-2.2 [Agent Implementation](#22-agent-implementation)  
- 2.2.1 [Chat with agent](#221-chat-with-agent)  
- 2.2.2 [Conversation history](#222-conversation-history)  
- 2.2.3 [Reasoning and other Bedrock Converse Arguments](#223-bedrock-converse-arguments)  
- 2.2.4 [Tools](#224-tools)  
- 2.2.5 [Multi-agent support](#225-multi-agent-support)  
- 2.2.6 [Tracing](#226-tracing)  
-2.3 [Evaluation Metrics](#23-evaluation-metrics)  
-2.4 [Repeatable Cases](#24-repeatable-cases)  
-2.5 [Cases with Dynamic Expectations](#25-cases-with-dynamic-expectations)  
-2.6 [Generating Traces: Running Cases in Bulk](#26-generating-traces-running-cases-in-bulk)  
-2.7 [CloudWatch Custom Metrics](#27-cloudwatch-custom-metrics)  
-2.8 [Deploying and Invoking the BedrockConverseAgent](#28-deploying-and-invoking-the-bedrockconverseagent)  
-2.9 [Web UI for Conversation Debugging](#29-web-ui-for-conversation-debugging)  
-2.10 [Mocking and Testing](#210-mocking-and-testing)  
+2.1 [Installation](#21-installation)
+2.2 [Agent Implementation](#22-agent-implementation)
+ 2.2.1 [Chat with agent](#221-chat-with-agent)
+ 2.2.2 [Conversation history](#222-conversation-history)
+ 2.2.3 [Reasoning and other Bedrock Converse Arguments](#223-bedrock-converse-arguments)
+ 2.2.4 [Tools](#224-tools)
+ 2.2.5 [Multi-agent support](#225-multi-agent-support)
+ 2.2.6 [Tracing](#226-tracing)
+2.3 [Evaluation Metrics](#23-evaluation-metrics)
+2.4 [Repeatable Cases](#24-repeatable-cases)
+2.5 [Cases with Dynamic Expectations](#25-cases-with-dynamic-expectations)
+2.6 [Generating Traces: Running Cases in Bulk](#26-generating-traces-running-cases-in-bulk)
+2.7 [CloudWatch Custom Metrics](#27-cloudwatch-custom-metrics)
+2.8 [Deploying and Invoking the BedrockConverseAgent](#28-deploying-and-invoking-the-bedrockconverseagent)
+2.9 [Web UI for Conversation Debugging](#29-web-ui-for-conversation-debugging)
+2.10 [Mocking and Testing](#210-mocking-and-testing)
 2.11 [Model Context Protocol (MCP) Client](#211-model-context-protocol-mcp-client)
 
 ### 2.1 Installation
@@ -612,6 +612,7 @@ When testing tools that depend on `AgentContext.current()`, you can use the `set
 
 ```python
 import pytest
+
 from generative_ai_toolkit.context import AgentContext
 
 @pytest.fixture
@@ -623,8 +624,7 @@ def agent_context():
 def custom_agent_context():
     return AgentContext.set_test_context(
         conversation_id="test-conversation",
-        principal_id="test-user",
-        auth_context_extra={"role": "admin"}
+        AuthContext(principal_id="test", extras={"role": "admin"})
     )
 
 # Example tool that uses context

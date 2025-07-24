@@ -97,10 +97,8 @@ class AgentContext:
         ----------
         conversation_id : str, optional
             The conversation ID for testing, by default "test"
-        principal_id : str, optional
-            The principal ID for testing, by default "test"
-        auth_context_extra : Any, optional
-            Additional auth context data, by default None
+        auth_context : AuthContext, optional
+            The AuthContext for testing, by default AuthContext(principal_id="test")
         tracer : Tracer, optional
             The tracer to use, by default NoopTracer()
         stop_event : Event, optional
