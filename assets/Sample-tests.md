@@ -1,13 +1,10 @@
 # Sample tests
 
-
 Goal of our framework is to enable and automate testing for LLM-based agents. The framework adapts the classical software development testing pyramid to the domain of LLM-based agents, ranging from unit tests to end-to-end testing. It facilitates structural testing of individual agent components, their internal and external interactions, and acceptance testing, ultimately evaluating the agent from an end-user perspective. 
 
 Designed to support testing of agents, their components, and interactions under various conditions with definable inputs, the framework assists developers in detecting and monitoring different error scenarios. Given that LLM-based agents are prone to systematic quality issues such as hallucinations, our framework helps with making these occurrences transparent to developers. 
 
 Here we show some exemplary tests as a starting point for others to adapt, build on and improve.
-
-More details can be found in our Arxiv-paper [Building robust agents with automated structural testing](TODO).
 
 ## Unit tests
 
