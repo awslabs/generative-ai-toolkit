@@ -4,7 +4,7 @@ Goal of our framework is to enable and automate testing for LLM-based agents. Th
 
 Designed to support testing of agents, their components, and interactions under various conditions with definable inputs, the framework assists developers in detecting and monitoring different error scenarios. Given that LLM-based agents are prone to systematic quality issues such as hallucinations, our framework helps with making these occurrences transparent to developers. 
 
-Here we show some exemplary tests as a starting point for others to adapt, build on and improve.
+This file contains some exemplary tests on level unit, integration and acceptance tests. 
 
 ## Unit tests
 
