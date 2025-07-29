@@ -55,6 +55,7 @@ class DynamoDbTracer(BaseTracer):
                 "span_id": trace.span_id,
                 "span_kind": trace.span_kind,
                 "span_name": trace.span_name,
+                "span_status": trace.span_status,
                 "scope_name": trace.scope.name,
                 "scope_version": trace.scope.version,
                 "resource_attributes": trace.resource_attributes,
@@ -157,4 +158,5 @@ class DynamoDbTracer(BaseTracer):
             ended_at=parsed["ended_at"],
             resource_attributes=parsed.get("resource_attributes", {}),
             attributes=parsed["attributes"],
+            span_status=parsed["span_status"],
         )

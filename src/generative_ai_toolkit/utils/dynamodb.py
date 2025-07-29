@@ -26,7 +26,7 @@ from boto3.dynamodb.types import Binary
 
 class DynamoDbMapper:
     @classmethod
-    def serialize(
+    def serialize(  # noqa: PLR0911
         cls,
         value: "Mapping[str, TableAttributeValueTypeDef] | TableAttributeValueTypeDef | Sequence[Mapping[str, TableAttributeValueTypeDef]]",
     ):
@@ -42,6 +42,8 @@ class DynamoDbMapper:
             return value.isoformat().replace("+00:00", "Z")
         elif isinstance(value, float):
             return Decimal(str(value))
+        elif isinstance(value, BaseException):
+            return repr(value)
         else:
             return value
 
