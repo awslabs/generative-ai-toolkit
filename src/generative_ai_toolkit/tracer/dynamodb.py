@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 import boto3
@@ -71,13 +70,13 @@ class DynamoDbTracer(BaseTracer):
             if self.ttl is not None:
                 item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
 
-            # Maintain as top level attributes for querying with GSI:
+            # Maintain as top level attribute for querying with GSI:
             if "ai.conversation.id" in trace.attributes:
                 item["conversation_id"] = trace.attributes["ai.conversation.id"]
 
             try:
                 self.table.put_item(
-                    Item=DynamoDbMapper.to_dynamo(item),
+                    Item=DynamoDbMapper.serialize(item),
                     ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
                 )
             except self.table.meta.client.exceptions.ResourceNotFoundException as e:
@@ -143,7 +142,7 @@ class DynamoDbTracer(BaseTracer):
     def item_to_trace(
         item: Mapping[str, Any], parent_traces_lookup: Mapping[str, Trace] = {}
     ):
-        parsed: dict = DynamoDbMapper.from_dynamo(item)
+        parsed: dict = DynamoDbMapper.deserialize(item)
         parent_span_id = parsed.pop("parent_span_id", None)
         return Trace(
             parsed["span_name"],
@@ -154,8 +153,8 @@ class DynamoDbTracer(BaseTracer):
             parent_span=(
                 parent_traces_lookup.get(parent_span_id) if parent_span_id else None
             ),
-            started_at=datetime.fromisoformat(parsed["started_at"]),
-            ended_at=datetime.fromisoformat(parsed["ended_at"]),
+            started_at=parsed["started_at"],
+            ended_at=parsed["ended_at"],
             resource_attributes=parsed.get("resource_attributes", {}),
             attributes=parsed["attributes"],
         )

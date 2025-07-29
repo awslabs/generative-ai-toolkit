@@ -12,31 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
+import datetime
+import re
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING
 
-from generative_ai_toolkit.utils.json import DefaultJsonEncoder
+if TYPE_CHECKING:
+    from mypy_boto3_dynamodb.type_defs import TableAttributeValueTypeDef
+
+from boto3.dynamodb.types import Binary
 
 
-class DynamoDbMapper(DefaultJsonEncoder):
-    """
-    Helper class to convert Decimal to float, which boto3 dynamodb doesn't do out of the box :(
-    """
-
-    def default(self, o):
-        if isinstance(o, Decimal):
-            if o.as_integer_ratio()[1] == 1:
-                return int(o)
-            return float(o)
-        return super().default(o)
+class DynamoDbMapper:
+    @classmethod
+    def serialize(
+        cls,
+        value: "Mapping[str, TableAttributeValueTypeDef] | TableAttributeValueTypeDef | Sequence[Mapping[str, TableAttributeValueTypeDef]]",
+    ):
+        if isinstance(value, dict):
+            return {k: cls.serialize(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [cls.serialize(v) for v in value]
+        elif isinstance(value, set):
+            return {cls.serialize(v) for v in value}
+        if isinstance(value, datetime.datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=datetime.UTC)  # type: ignore
+            return value.isoformat().replace("+00:00", "Z")
+        elif isinstance(value, float):
+            return Decimal(str(value))
+        else:
+            return value
 
     @classmethod
-    def to_dynamo(cls, data: Any) -> Any:
-        return json.loads(json.dumps(data, cls=cls), parse_float=Decimal)
-
-    @classmethod
-    def from_dynamo(cls, data: Any) -> Any:
-        return json.loads(
-            json.dumps(data, cls=cls),
-        )
+    def deserialize(  # noqa: PLR0911
+        cls,
+        value: "Mapping[str, TableAttributeValueTypeDef] | TableAttributeValueTypeDef | Sequence[Mapping[str, TableAttributeValueTypeDef]]",
+    ):
+        if isinstance(value, dict):
+            return {k: cls.deserialize(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [cls.deserialize(v) for v in value]
+        elif isinstance(value, set):
+            return {cls.deserialize(v) for v in value}
+        elif isinstance(value, Binary):
+            return bytes(value)  # type: ignore
+        elif isinstance(value, Decimal):
+            if value % 1 == 0:
+                return int(value)
+            return float(value)
+        elif isinstance(value, str) and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", value
+        ):
+            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            return value
