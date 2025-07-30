@@ -21,7 +21,6 @@ permissions and limitations under the License.
 # validation rules, and documentation for the tool's inputs and outputs.
 ###
 
-
 from pydantic import BaseModel, Field, model_validator
 
 

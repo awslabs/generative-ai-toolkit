@@ -1,0 +1,70 @@
+name: Full test run 
+
+on:
+  push:
+    branches: [ sample_agent_paper ] # ToDo: replace with your own branch
+  pull_request:
+    branches: [ sample_agent_paper ] # ToDo: replace with your own branch
+  workflow_dispatch:
+    branches: [ sample_agent_paper ] # ToDo: replace with your own branch
+env:
+  AWS_REGION: eu-central-1
+  ROLE_TO_ASSUME: arn:aws:iam::XXX:role/GithubBedrock # ToDo: replace with an IAM role of your account
+
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read # This is required for actions/checkout
+
+jobs:
+  cicd:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+
+      - name: Cache Python virtualenv
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install python dependencies
+        run: |
+          python -m pip install --upgrade uv || (echo "Failed to install uv" && exit 1)
+          uv venv
+          uv pip install generative-ai-toolkit[all]==0.7.0
+          uv pip install -r requirements.txt || (echo "Failed to install requirements" && exit 1)
+          uv run python -c "import generative_ai_toolkit; print(generative_ai_toolkit)" || (echo "Failed to import uv" && exit 1)
+          uv pip install coverage
+          pip3 install coverage
+
+      # ToDo: replace with your own region
+      - name: set aws region
+        run: |
+          export AWS_DEFAULT_REGION="eu-central-1"  
+          export AWS_REGION="eu-central-1"
+          
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run Tests
+        run: |
+          uv run coverage run --branch --source=lib -m pytest -v examples/sample_agent/tests \
+          && coverage report -m \
+          && coverage html -d coverage-report \
+          && mv coverage-report/index.html coverage-report/unit_coverage.html
