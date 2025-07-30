@@ -49,9 +49,7 @@ class ConversationHistory(Protocol):
         """
         ...
 
-    def set_auth_context(
-        self, **auth_context: Unpack[AuthContext]
-    ) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         """
         Set the current auth context
         """
@@ -100,9 +98,7 @@ class InMemoryConversationHistory(ConversationHistory):
     def auth_context(self) -> AuthContext:
         return self._auth_context
 
-    def set_auth_context(
-        self, **auth_context: Unpack[AuthContext]
-    ) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         self._auth_context = auth_context
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
@@ -150,9 +146,7 @@ class DynamoDbConversationHistory(ConversationHistory):
     def auth_context(self) -> AuthContext:
         return self._auth_context
 
-    def set_auth_context(
-        self, **auth_context: Unpack[AuthContext]
-    ) -> None:
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         self._auth_context = auth_context
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
@@ -163,7 +157,7 @@ class DynamoDbConversationHistory(ConversationHistory):
             "created_at": now.isoformat(),
             "conversation_id": self.conversation_id,
             "role": msg["role"],
-            "content": DynamoDbMapper.to_dynamo(msg["content"]),
+            "content": msg["content"],
             "auth_context": self._auth_context,
             "identifier": self.identifier,
         }
@@ -199,9 +193,9 @@ class DynamoDbConversationHistory(ConversationHistory):
                 [
                     {
                         "role": item["role"],
-                        "content": DynamoDbMapper.from_dynamo(item["content"]),
+                        "content": DynamoDbMapper.deserialize(item["content"]),
                     }
-                    for item in DynamoDbMapper.from_dynamo(response["Items"])
+                    for item in response["Items"]
                 ]
             )
             if "LastEvaluatedKey" not in response:

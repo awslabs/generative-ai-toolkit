@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,13 +22,17 @@ from sample_agent_2 import sample_agent_2
 
 from generative_ai_toolkit.test.mock import MockBedrockConverse
 
+HERE = Path(__file__).parent
+
 
 @pytest.fixture
 def mock_bedrock_converse():
     mock = MockBedrockConverse()
     yield mock
     if mock.mock_responses:
-        raise Exception(f"Still have unconsumed mock responses ({len(mock.mock_responses)})")
+        raise Exception(
+            f"Still have unconsumed mock responses ({len(mock.mock_responses)})"
+        )
 
 
 @pytest.fixture
@@ -467,3 +472,27 @@ def mock_bedrock_converse_stream_spaghetti_recipe_session():
     yield mock_session
     if response_streams:
         raise Exception(f"Unconsumed response streams left! {response_streams}")
+
+
+@pytest.fixture
+def invention_png():
+    return open(HERE / "invention.png", "rb").read()
+
+
+def pytest_addoption(parser):
+    parser.addoption("--dynamodb-traces-table-name", action="store", default="traces")
+    parser.addoption(
+        "--dynamodb-conversation-history-table-name",
+        action="store",
+        default="conversation-history",
+    )
+
+
+@pytest.fixture(scope="session")
+def dynamodb_traces_table_name(request):
+    return request.config.getoption("--dynamodb-traces-table-name")
+
+
+@pytest.fixture(scope="session")
+def dynamodb_conversation_history_table_name(request):
+    return request.config.getoption("--dynamodb-conversation-history-table-name")

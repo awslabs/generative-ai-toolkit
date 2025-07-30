@@ -34,4 +34,4 @@ jobs:
       - run: uv pip install -e '.[dev]'
       - run: ruff check src tests examples
       - run: playwright install --with-deps
-      - run: pytest --cov=src --cov-report=term-missing tests
+      - run: pytest --cov=src --cov-report=term-missing tests/unit
