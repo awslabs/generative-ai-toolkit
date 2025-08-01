@@ -19,7 +19,7 @@ import html
 import json
 import re
 import textwrap
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
 from threading import Event
@@ -37,10 +37,17 @@ from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 
 def chat_ui(
-    agent: Agent,
+    agent: Agent | Callable[[], Agent],
     show_traces_drop_down=True,
     show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
+    *,
+    max_concurrent_conversations: int | None = None,
 ):
+    @functools.lru_cache(maxsize=max_concurrent_conversations)
+    def ensure_agent_instance(session_hash: str | None):
+        if isinstance(agent, Agent):
+            return agent
+        return agent()
 
     ensure_running_event_loop()
 
@@ -58,12 +65,18 @@ def chat_ui(
             stop_event.set()
         return gr.update(stop_btn=False)
 
-    def assistant_stream(user_input: str, stop_event: Event | None):
+    def assistant_stream(
+        request: gr.Request, user_input: str, stop_event: Event | None
+    ):
+        current_agent_instance = ensure_agent_instance(request.session_hash)
         if not user_input:
-            yield agent.traces
+            yield current_agent_instance.traces
             return
-        traces: dict[str, Trace] = {trace.span_id: trace for trace in agent.traces}
-        for trace in agent.converse_stream(
+
+        traces: dict[str, Trace] = {
+            trace.span_id: trace for trace in current_agent_instance.traces
+        }
+        for trace in current_agent_instance.converse_stream(
             user_input, stream="traces", stop_event=stop_event
         ):
             traces[trace.span_id] = trace
@@ -76,12 +89,29 @@ def chat_ui(
         *_, messages = chat_messages_from_traces(traces, show_traces=show_traces)
         return messages
 
-    def reset_agent():
-        agent.reset()
+    def reset_agent(request: gr.Request):
+        current_agent_instance = ensure_agent_instance(request.session_hash)
+        current_agent_instance.reset()
         return (
-            gr.update(value=[], label=f"Conversation {agent.conversation_id}"),
+            gr.update(
+                value=[], label=f"Conversation {current_agent_instance.conversation_id}"
+            ),
             [],
+            current_agent_instance.conversation_id,
+            current_agent_instance.conversation_id,
         )
+
+    js_set_conversation_id_as_query_param = textwrap.dedent(
+        """
+        function (conversationId) {
+            if (conversationId) {
+              const params=new URLSearchParams(window.location.search);
+              params.set('conversation-id', conversationId);
+              history.replaceState(null, '', '?' + params);
+            }
+        }
+        """
+    )
 
     with gr.Blocks(
         theme="origin", fill_width=True, title="Generative AI Toolkit"
@@ -91,6 +121,12 @@ def chat_ui(
         traces_state = gr.State(value=[])
         stop_event = gr.State(value=None)
         last_user_input = gr.State("")
+        last_conversation_id = gr.BrowserState(
+            None, storage_key="generative-ai-toolkit.ui.conversation-id"
+        )
+
+        # Use Textbox instead of state so JS can see the value:
+        conversation_id = gr.Textbox(visible=False)
 
         with gr.Row(visible=show_traces_drop_down):
             gr.Markdown("")  # functions as spacer
@@ -111,7 +147,6 @@ def chat_ui(
         chatbot = gr.Chatbot(
             type="messages",
             height="75vh" if show_traces_drop_down else "80vh",
-            label=f"Conversation {agent.conversation_id}",
         )
 
         trace_visibility_drop_down.select(
@@ -134,6 +169,7 @@ def chat_ui(
             autofocus=True,
             show_label=False,
             elem_id="user-input",
+            interactive=False,
         )
 
         msg.submit(
@@ -162,9 +198,49 @@ def chat_ui(
             queue=True,
         )
 
-        chatbot.clear(reset_agent, outputs=[chatbot, traces_state])
+        chatbot.clear(
+            reset_agent,
+            outputs=[chatbot, traces_state, conversation_id, last_conversation_id],
+        ).then(
+            None,
+            inputs=[conversation_id],
+            js=js_set_conversation_id_as_query_param,
+        )
 
-        demo.load(lambda: agent.traces, outputs=[traces_state])
+        def load(request: gr.Request, last_conversation_id: str):
+            current_agent_instance = ensure_agent_instance(request.session_hash)
+
+            # Determine the conversation id the user wants to use.
+            # This can be either a query param (?conversation-id=ABC),
+            # or a value from local storage (the last conversation id).
+            # The query param takes precedence:
+            if "conversation-id" in request.query_params and isinstance(
+                request.query_params["conversation-id"], str
+            ):
+                current_agent_instance.set_conversation_id(
+                    request.query_params["conversation-id"]
+                )
+            elif last_conversation_id:
+                current_agent_instance.set_conversation_id(last_conversation_id)
+            return (
+                gr.update(
+                    label=f"Conversation: {current_agent_instance.conversation_id}"
+                ),
+                current_agent_instance.traces,
+                gr.update(interactive=True),
+                current_agent_instance.conversation_id,
+                current_agent_instance.conversation_id,
+            )
+
+        demo.load(
+            load,
+            inputs=[last_conversation_id],
+            outputs=[chatbot, traces_state, msg, conversation_id, last_conversation_id],
+        ).then(
+            None,
+            inputs=[conversation_id],
+            js=js_set_conversation_id_as_query_param,
+        )
 
         return demo
 

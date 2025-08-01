@@ -1935,6 +1935,29 @@ This interactive UI is meant for development and testing phases, to quickly iter
 
 <img src="./assets/images/ui-chat.png" alt="UI Chat Interface Screenshot" title="UI Chat Interface" width="1200"/>
 
+##### Concurrent conversations
+
+To support concurrent conversations, e.g. in multiple browser tabs, pass an agent factory instead of an agent instance:
+
+```python
+from generative_ai_toolkit.ui import chat_ui
+
+def agent_factory():
+    agent = BedrockConverseAgent(
+        model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+        system_prompt="You are a helpful assistant"
+    )
+
+    # Register any tools as needed
+    agent.register_tool(my_tool_function)
+
+    return agent
+
+# Create and launch the chat UI
+demo = chat_ui(agent_factory)
+demo.queue(default_concurrency_limit=10).launch(inbrowser=True)
+```
+
 ### 2.10 Mocking and Testing
 
 As with all software, you'll want to test your agent. You can use above mentioned [Cases](#25-repeatable-cases) for evaluating your agent in an end-to-end testing style. You may also want to create integration tests and unit tests, e.g. to target specific code paths in isolation. For such tests you can use the following tools from the Generative AI Toolkit:

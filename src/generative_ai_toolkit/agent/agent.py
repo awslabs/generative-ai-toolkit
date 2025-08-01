@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     )
 
 
+@runtime_checkable
 class Agent(Tool, Protocol):
     @property
     def model_id(self) -> str:
