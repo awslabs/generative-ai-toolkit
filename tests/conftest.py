@@ -479,6 +479,16 @@ def invention_png():
     return open(HERE / "invention.png", "rb").read()
 
 
+@pytest.fixture
+def sample_document_docx():
+    return open(HERE / "generative-ai-toolkit.docx", "rb").read()
+
+
+@pytest.fixture
+def sample_document_pdf():
+    return open(HERE / "generative-ai-toolkit.pdf", "rb").read()
+
+
 def pytest_addoption(parser):
     parser.addoption("--dynamodb-traces-table-name", action="store", default="traces")
     parser.addoption(

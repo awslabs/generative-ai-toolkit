@@ -29,6 +29,7 @@ from typing import (
     Any,
     Literal,
     Protocol,
+    TypeGuard,
     Unpack,
     overload,
     runtime_checkable,
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ToolResultBlockUnionTypeDef,
+        ToolResultContentBlockUnionTypeDef,
         ToolSpecificationTypeDef,
     )
 
@@ -720,7 +722,7 @@ class BedrockConverseAgent(Agent):
             trace.emit_snapshot()
 
             tool_error = None
-            tool_response_json: Any = None
+            tool_response_content: Sequence[ToolResultContentBlockUnionTypeDef] = []
             try:
                 tool = tools.get(tool_name)
                 if not tool:
@@ -743,15 +745,23 @@ class BedrockConverseAgent(Agent):
                 else:
                     tool_response = tool.invoke(**tool_use["input"])
                 trace.add_attribute("ai.tool.output", tool_response)
-                if not isinstance(tool_response, dict):
-                    tool_response = {"toolResponse": tool_response}
-                # Ensure tool response can be represented as JSON
-                # (otherwise boto3 will throw errors upon calling converse)
-                tool_response_json = json.loads(
-                    json.dumps(tool_response, cls=self.tool_result_json_encoder)
-                )
+                if self.is_tool_result_content_block_sequence(tool_response):
+                    tool_response_content = tool_response
+                else:
+                    # Return tool response as JSON object to the LLM
+                    if not isinstance(tool_response, dict):
+                        tool_response = {"toolResponse": tool_response}
+                    # Ensure tool response can be represented as JSON
+                    # (otherwise boto3 will throw errors upon calling converse)
+                    tool_response_json = json.loads(
+                        json.dumps(tool_response, cls=self.tool_result_json_encoder)
+                    )
+                    tool_response_content = [{"json": tool_response_json}]
             except Exception as err:
                 tool_error = err
+                tool_response_content = [
+                    {"text": (f"Error invoking tool: {tool_error}")}
+                ]
                 trace.add_attribute("ai.tool.error", err)
                 trace.add_attribute(
                     "ai.tool.error.traceback",
@@ -761,22 +771,47 @@ class BedrockConverseAgent(Agent):
             return {
                 "toolUseId": tool_use["toolUseId"],
                 "status": "success" if not tool_error else "error",
-                "content": [
-                    {
-                        "json": (
-                            tool_response_json
-                            if tool_response_json
-                            else {
-                                "message": (
-                                    f"Error invoking tool: {tool_error}"
-                                    if tool_error
-                                    else "Success"
-                                )
-                            }
-                        )
-                    }
-                ],
+                "content": tool_response_content,
             }
+
+    @staticmethod
+    def is_tool_result_content_block_sequence(  # noqa: PLR0911
+        seq: Sequence[Any],
+    ) -> "TypeGuard[Sequence[ToolResultContentBlockUnionTypeDef]]":
+        if not isinstance(seq, Sequence) or isinstance(seq, str | bytes):
+            return False
+
+        for item in seq:
+            if not isinstance(item, Mapping):
+                return False
+
+            if not any(
+                key in item for key in ("json", "text", "image", "video", "document")
+            ):
+                return False
+
+            if "json" in item and not isinstance(item["json"], Mapping):
+                return False
+
+            if "text" in item and not isinstance(item["text"], str):
+                return False
+
+            if "image" in item:
+                image = item["image"]
+                if not isinstance(image, Mapping) or "format" not in image:
+                    return False
+
+            if "video" in item:
+                video = item["video"]
+                if not isinstance(video, Mapping) or "format" not in video:
+                    return False
+
+            if "document" in item:
+                document = item["document"]
+                if not isinstance(document, Mapping) or "format" not in document:
+                    return False
+
+        return True
 
     @traced("converse", span_kind="SERVER")
     def converse(

@@ -215,6 +215,26 @@ print(len(agent.messages)) # 0
 print(agent.conversation_id)  # e.g.: "01J5DQRD864TR3BF314CZK8X5B" (changed)
 ```
 
+##### Multi-modal messages
+
+To send multi-modal messages (image, video, documents) to the agent, use `add_message()` on the agent's conversation history:
+
+```python
+image = open("/path/to/image", "rb").read()
+
+agent.conversation_history.add_message(
+    {
+        "role": "user",
+        "content": [
+            {"image": {"format": "png", "source": {"bytes": image}}}
+        ],
+    }
+)
+
+# Then, when you chat with the agent, it will include the message you added to the LLM invocation:
+agent.converse("Describe the image please")
+```
+
 #### 2.2.3 Bedrock Converse Arguments
 
 Upon instantiating the `BedrockConverseAgent` you can pass any arguments that the Bedrock Converse API accepts, and these will be used for all invocations of the Converse API by the agent. You could for example specify usage of [Amazon Bedrock Guardrails](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html):
@@ -317,54 +337,26 @@ print(response) # Okay, let me get the current weather report for Amsterdam usin
 
 As you can see, tools that you've registered will be invoked automatically by the agent. The output from `converse` is always just a string with the agent's response to the user.
 
-##### Tool Development with Pydantic
+##### Multi-modal responses
 
-You can use Pydantic models to define your tool's interface. This approach provides several key benefits:
-
-1. **Clear Interface Documentation**: Input/output schemas are automatically generated from your models. The LLM "reads" both the model's docstring and the `description` attributes of Pydantic Field objects to understand how to use the tool correctly. This natural language documentation helps the LLM make informed decisions about parameter values.
-2. **Error Handling with Self-Correction**: Built-in error handling and validation messages are fed back to the LLM, allowing it to understand what went wrong and self-correct its tool usage. For example, if the LLM provides an invalid value for a parameter, Pydantic's detailed error message helps the LLM understand why it was invalid and how to fix it in subsequent attempts.
-3. **Strong Type Validation**: Pydantic enforces strict type checking and validation at runtime
-
-You can find a complete example in `examples/pydantic_tools/` that demonstrates this approach. The example implements a weather alerts tool with proper input validation, error handling, and response structuring:
+Tools can return multi-modal responses (image, video, documents) as well. If you want that, your tool response should match the format expected by the Amazon Bedrock Converse API:
 
 ```python
-from pydantic import BaseModel, Field
+from mypy_boto3_bedrock_runtime.type_defs import ToolResultContentBlockUnionTypeDef  # Optional, to help you with coding
 
-class WeatherAlertRequest(BaseModel):
+def get_image() -> list[ToolResultContentBlockUnionTypeDef]:
     """
-    Request parameters for the weather alerts tool.
+    Read image from disk
     """
-    area: Optional[str] = Field(
-        default=None,
-        description="State code (e.g., 'CA', 'TX') or zone/county code to filter alerts by area."
-    )
-    severity: Optional[str] = Field(
-        default=None,
-        description="Filter by severity level: 'Extreme', 'Severe', 'Moderate', 'Minor', or 'Unknown'.",
-        pattern="^(Extreme|Severe|Moderate|Minor|Unknown)$"
-    )
 
-class WeatherAlertsTool:
-    @property
-    def tool_spec(self) -> Dict[str, Any]:
-        """Tool specification is automatically generated from the Pydantic model."""
-        schema = WeatherAlertRequest.model_json_schema()
-        return {
-            "name": "get_weather_alerts",
-            "description": WeatherAlertRequest.__doc__,
-            "inputSchema": {"json": schema}
-        }
+    image = open("/path/to/image", "rb").read()
 
-    def invoke(self, **kwargs) -> Dict[str, Any]:
-        """
-        Invoke the weather alerts tool with validated parameters.
-        """
-        try:
-            request = WeatherAlertRequest(**kwargs)  # Validation happens here
-            return self._get_weather_alerts(request)
-        except ValidationError as e:
-            return {"error": str(e)}
+    return [{"image": {"format": "png", "source": {"bytes": image}}}]
+
+agent.register_tool(get_image)
 ```
+
+See more examples in our test suite [here](/tests/integration/test_tool_multi_modal.py).
 
 ##### Other tools
 
@@ -433,6 +425,55 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 ```
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
+
+##### Tool Development with Pydantic
+
+You can use Pydantic models to define your tool's interface. This approach provides several key benefits:
+
+1. **Clear Interface Documentation**: Input/output schemas are automatically generated from your models. The LLM "reads" both the model's docstring and the `description` attributes of Pydantic Field objects to understand how to use the tool correctly. This natural language documentation helps the LLM make informed decisions about parameter values.
+2. **Error Handling with Self-Correction**: Built-in error handling and validation messages are fed back to the LLM, allowing it to understand what went wrong and self-correct its tool usage. For example, if the LLM provides an invalid value for a parameter, Pydantic's detailed error message helps the LLM understand why it was invalid and how to fix it in subsequent attempts.
+3. **Strong Type Validation**: Pydantic enforces strict type checking and validation at runtime
+
+You can find a complete example in `examples/pydantic_tools/` that demonstrates this approach. The example implements a weather alerts tool with proper input validation, error handling, and response structuring:
+
+```python
+from pydantic import BaseModel, Field
+
+class WeatherAlertRequest(BaseModel):
+    """
+    Request parameters for the weather alerts tool.
+    """
+    area: Optional[str] = Field(
+        default=None,
+        description="State code (e.g., 'CA', 'TX') or zone/county code to filter alerts by area."
+    )
+    severity: Optional[str] = Field(
+        default=None,
+        description="Filter by severity level: 'Extreme', 'Severe', 'Moderate', 'Minor', or 'Unknown'.",
+        pattern="^(Extreme|Severe|Moderate|Minor|Unknown)$"
+    )
+
+class WeatherAlertsTool:
+    @property
+    def tool_spec(self) -> Dict[str, Any]:
+        """Tool specification is automatically generated from the Pydantic model."""
+        schema = WeatherAlertRequest.model_json_schema()
+        return {
+            "name": "get_weather_alerts",
+            "description": WeatherAlertRequest.__doc__,
+            "inputSchema": {"json": schema}
+        }
+
+    def invoke(self, **kwargs) -> Dict[str, Any]:
+        """
+        Invoke the weather alerts tool with validated parameters.
+        """
+        try:
+            request = WeatherAlertRequest(**kwargs)  # Validation happens here
+            return self._get_weather_alerts(request)
+        except ValidationError as e:
+            return {"error": str(e)}
+```
 
 ##### Tool Registry
 
