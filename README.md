@@ -1,19 +1,93 @@
 # Generative AI Toolkit
 
-The **Generative AI Toolkit** is a lightweight library that covers the life cycle of LLM-based applications, including agents. Its purpose is to support developers in building and operating high quality LLM-based applications, over their entire life cycle, starting with the very first deployment, in an automated workflow:
+The **Generative AI Toolkit** is a lightweight library for building, testing and evaluating AI agents in Python, using any of the LLMs supported by the Amazon Bedrock Converse API.
 
-- **Build new agents** using any of the LLM's supported by the Amazon Bedrock Converse API. Streaming responses are supported, and you can simply add your Python functions as tools. Conversation history is stored in Amazon DynamoDB, other backends can be added easily. Agents can be deployed as AWS Lambda functions (exposed via Function URL), or as containers on Amazon ECS or EKS.
-- **OpenTelemetry compatible tracing** to track in detail what your agents do. Out-of-the-box tracers for DynamoDB and AWS X-Ray are included, and it's easy to add custom tracers.
-- **Evaluate your agents** with metrics, both while developing as well as in production––as your agents interact with users. Use the out-of-the-box metrics such as Cost, Latency, Cosine similarity, Conciseness, or add your own custom metrics. Metrics can be exported to Amazon CloudWatch Metrics easily, allowing you to tap into the full power of Amazon CloudWatch for observability.
-- **Test your agents** on a deep level by writing assertions against the collected traces. Assert that your agents e.g. respond to users in the right way, and that they invoke the right tools, with the right inputs. A conversational mock of the Amazon Bedrock Converse API is included, so that you can make your tests deterministic and fast.
+Compared to other libraries out there, the Generative AI Toolkit indexes heavily on production observability, tracing, testing and evaluation, and simplicity of deployment on AWS. A typical production-grade deployment uses just AWS Lambda (or ECS, EKS), Amazon DynamoDB and Amazon CloudWatch.
 
-The toolkit builds upon principles and methodologies detailed in our research paper:
+**Sample usage**
 
-**[GENERATIVE AI TOOLKIT- A FRAMEWORK FOR INCREASING THE QUALITY OF LLM-BASED APPLICATIONS OVER THEIR WHOLE LIFE CYCLE](https://arxiv.org/abs/2412.14215)**.
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.context import AgentContext
+from generative_ai_toolkit.test import Case, Expect
 
-## Highlights
+agent = BedrockConverseAgent(
+    model_id="eu.amazon.nova-micro-v1:0",
+    system_prompt="You are a helpful assistant. Use your tools to help the user.",
+)
 
-The Generative AI Toolkit helps you build reliable agents, where you as developer have full visibility into what your agents do, both during development and in production; when your agents interact with real users. To this end, Generative AI Toolkit captures traces for all interactions between your users and your agents, and for the agent's internal actions, such as LLM invocations and tool invocations. With these traces you can use the Generative AI Toolkit to evaluate your agents continuously.
+
+def weather_report(city_name: str) -> str:
+    """
+    Gets the current weather report for a given city
+
+    Parameters
+    ------
+    city_name: string
+      The name of the city
+    """
+
+    # Example of how to add tracing to your tool implementations
+    tracer = AgentContext.current().tracer
+
+    with tracer.trace("inside-weather-report") as span:
+        span.add_attribute(
+            "attribute_name", {"Attribute values": ["can be any Python object"]}
+        )
+
+        # Tool response
+        return "Sunny"
+
+
+agent.register_tool(weather_report)
+
+# Send a message to the agent and have it stream its response back:
+for chunk in agent.converse_stream("What's the weather like right now in Amsterdam?"):
+    print(chunk, end="")
+
+# Assert that the weather_report tool was used (raises an error if not):
+Expect(agent.traces).tool_invocations.to_include("weather_report")
+
+# Similar, but using test case with 2 turns:
+test_case = Case(user_inputs=["What's the weather like right now?", "In Amsterdam"])
+traces = test_case.run(agent)
+Expect(traces).tool_invocations.to_include("weather_report").with_output("Sunny")
+
+# Start a new conversation, with empty history:
+agent.reset()
+
+# Stream traces instead of text chunks:
+# (Note: this also yields relevant snapshots of traces that are still underway)
+for trace in agent.converse_stream(
+    "What's the weather like right now in Amsterdam?", stream="traces"
+):
+    print(trace.as_human_readable())
+
+# Trace attributes are OpenTelemetry compatible but preserve fidelity:
+tool_trace = next(
+    trace for trace in agent.traces if trace.span_name == "inside-weather-report"
+)
+assert tool_trace.attributes["attribute_name"] == {
+    "Attribute values": ["can be any Python object"]
+}
+
+# You can also collect metrics, run tests in parallel, compare different model ids
+# and other agent parameters against each other, view metrics and traces in a UI,
+# add your own tracers, use an LLM mock, expose the agent over HTTP, and much more.
+...
+```
+
+**Major features**
+
+- **Traces** are front and center in the Generative AI Toolkit––everything your agent does can be traced. Traces for the current conversation can be accessed with `agent.traces`, which returns traces from subagents too (recursively). This simplifies testing and visualization of your single or multi-agent architectures. Out-of-the-box tracers for DynamoDB and AWS X-Ray are included, and it's easy to add custom tracers. In automated tests you can use the `Expect()` class to express your test assertions against the traces.
+- For **evaluation**, use the out-of-the-box metrics such as cost, latency, cosine similarity, conciseness, or add your own custom metrics. The metrics you use while developing your agent, can continuously be run against your deployed agent in production too (asynchronously). If your agent's performance degrades, you will know! You have the full power of Amazon CloudWatch Metrics available to you to define alarms and thresholds, and catch anomalies.
+- Helpers for **mocking** the Amazon Bedrock Converse API, to create unit tests and partially mocked integration tests that are deterministic and fast. The mock supports multi-turn conversation, and dynamic response generation. With the mock you can develop and run your agent locally without needing access to an actual LLM
+- Integrates with **[Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)**
+- The testing and evaluation capabilities can be used for agents and LLM-based applications created with **other libraries** (for example [Strands](https://strandsagents.com/latest/documentation/docs/)).
+
+Interested? Please read on. And check out our research paper: [GENERATIVE AI TOOLKIT- INCREASING THE QUALITY OF LLM-BASED APPLICATIONS OVER THEIR WHOLE LIFE CYCLE](https://arxiv.org/abs/2412.14215).
+
+## Screenshots
 
 You can view the traces, as well as the collected metrics, in various developer friendly ways, e.g. with the web UI:
 
