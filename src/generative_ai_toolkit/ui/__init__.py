@@ -66,16 +66,17 @@ def chat_ui(
         return gr.update(stop_btn=False)
 
     def assistant_stream(
-        request: gr.Request, user_input: str, stop_event: Event | None
+        request: gr.Request,
+        traces_state: list[Trace],
+        user_input: str,
+        stop_event: Event | None,
     ):
         current_agent_instance = ensure_agent_instance(request.session_hash)
         if not user_input:
-            yield current_agent_instance.traces
+            yield traces_state
             return
 
-        traces: dict[str, Trace] = {
-            trace.span_id: trace for trace in current_agent_instance.traces
-        }
+        traces: dict[str, Trace] = {trace.span_id: trace for trace in traces_state}
         for trace in current_agent_instance.converse_stream(
             user_input, stream="traces", stop_event=stop_event
         ):
@@ -178,7 +179,7 @@ def chat_ui(
             outputs=[msg, last_user_input, stop_event],
         ).then(
             assistant_stream,
-            inputs=[last_user_input, stop_event],
+            inputs=[traces_state, last_user_input, stop_event],
             outputs=[traces_state],
             show_progress="full",
             show_progress_on=[chatbot],

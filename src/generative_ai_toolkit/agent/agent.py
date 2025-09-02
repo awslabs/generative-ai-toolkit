@@ -408,7 +408,7 @@ class BedrockConverseAgent(Agent):
             self._conversation_history = conversation_history
             weakref.finalize(self, self._prune_instances_used)
         if not tracer:
-            self._tracer = TeeTracer().add_tracer(InMemoryTracer(memory_size=50))
+            self._tracer = TeeTracer().add_tracer(InMemoryTracer())
         else:
             if callable(tracer):
                 tracer = tracer()

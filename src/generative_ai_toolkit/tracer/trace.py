@@ -29,6 +29,16 @@ from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 
 LOCK = threading.Lock()
 IMMUTABLE_TYPES = (int, float, bool, str, type(None), tuple, frozenset)
+BLUE = "\033[94m"  # noqa: N806
+GREEN = "\033[92m"  # noqa: N806
+YELLOW = "\033[93m"  # noqa: N806
+RED = "\033[91m"  # noqa: N806
+GRAY = "\033[90m"  # noqa: N806
+RESET = "\033[0m"  # noqa: N806
+MAGENTA = "\033[95m"  # noqa: N806
+CYAN = "\033[96m"  # noqa: N806
+DIM_GRAY = "\033[2;90m"  # noqa: N806
+WHITE = "\033[37m"  # noqa: N806
 
 
 def thread_safe_deepcopy(obj, lock=LOCK):
@@ -237,15 +247,33 @@ class Trace:
             },
         }
 
-    def as_human_readable(self, max_length=160, max_lines=-1) -> str:
-        BLUE = "\033[94m"  # noqa: N806
-        GREEN = "\033[92m"  # noqa: N806
-        YELLOW = "\033[93m"  # noqa: N806
-        RED = "\033[91m"  # noqa: N806
-        GRAY = "\033[90m"  # noqa: N806
-        RESET = "\033[0m"  # noqa: N806
-        MAGENTA = "\033[95m"  # noqa: N806
-        CYAN = "\033[96m"  # noqa: N806
+    def as_human_readable(
+        self,
+        *,
+        max_length=160,
+        max_lines=-1,
+        color_white=WHITE,
+        color_blue=BLUE,
+        color_green=GREEN,
+        color_yellow=YELLOW,
+        color_red=RED,
+        color_gray=GRAY,
+        color_reset=RESET,
+        color_magenta=MAGENTA,
+        color_cyan=CYAN,
+        color_dim_gray=DIM_GRAY,
+    ) -> str:
+
+        # Snapshots are printed only in dim gray:
+        if self.ended_at is None:
+            color_white = color_dim_gray
+            color_blue = color_dim_gray
+            color_green = color_dim_gray
+            color_yellow = color_dim_gray
+            color_red = color_dim_gray
+            color_gray = color_dim_gray
+            color_magenta = color_dim_gray
+            color_cyan = color_dim_gray
 
         def truncate(
             text: str, max_length=max_length, max_lines=1, indent_subsequent_lines=0
@@ -294,16 +322,16 @@ class Trace:
         )
 
         span_kind_color = (
-            RED
+            color_red
             if (
                 "ai.tool.error" in attributes
                 or "ai.llm.response.error" in attributes
                 or "exception.message" in attributes
             )
             else (
-                MAGENTA
+                color_magenta
                 if self.span_kind == "CLIENT"
-                else GREEN if self.span_kind == "SERVER" else BLUE
+                else color_green if self.span_kind == "SERVER" else color_blue
             )
         )
 
@@ -316,11 +344,11 @@ class Trace:
             "service.name"
         )
         result = (
-            f"{BLUE}[{self.trace_id}/{self.parent_span.span_id if self.parent_span else 'root'}/{self.span_id}]{RESET} "
-            f"{CYAN}{agent_name or "<missing service.name>"}{RESET} "
-            f"{span_kind_color}{self.span_kind}{RESET} "
-            f"{start_time} - {self.span_name}"
-            f"\n{f'  {YELLOW}{attrs_str}{RESET}' if attrs_str else ''}"
+            f"{color_blue}[{self.trace_id}/{self.parent_span.span_id if self.parent_span else 'root'}/{self.span_id}]{color_reset} "
+            f"{color_cyan}{agent_name or "<missing service.name>"}{color_reset} "
+            f"{span_kind_color}{self.span_kind}{color_reset} "
+            f"{color_white}{start_time} - {self.span_name}{' [SNAPSHOT]' if not self.ended_at else ''}{color_reset}"
+            f"\n{f'  {color_yellow}{attrs_str}{color_reset}' if attrs_str else ''}"
         )
 
         trace_type = attributes.get("ai.trace.type")
@@ -329,72 +357,70 @@ class Trace:
             messages = attributes.get("ai.llm.request.messages", [])
             if messages:
                 last_message = messages[-1].get("content", "")
-                result += (
-                    f"\n{GRAY}{truncate_multiline("Last message", last_message)}{RESET}"
-                )
+                result += f"\n{color_gray}{truncate_multiline("Last message", last_message)}{color_reset}"
 
             llm_response = attributes.get("ai.llm.response.output", "")
             if llm_response:
-                result += (
-                    f"\n{GRAY}{truncate_multiline("Response", llm_response)}{RESET}"
-                )
+                result += f"\n{color_gray}{truncate_multiline("Response", llm_response)}{color_reset}"
 
             stop_reason = attributes.get("ai.llm.response.stop.reason")
             if stop_reason:
-                result += (
-                    f"\n{GRAY}{truncate_multiline("Stop reason", stop_reason)}{RESET}"
-                )
+                result += f"\n{color_gray}{truncate_multiline("Stop reason", stop_reason)}{color_reset}"
 
             if error := attributes.get("ai.llm.response.error"):
-                result += f"\n{RED}{truncate_multiline("Error", error)}{RESET}"
+                result += (
+                    f"\n{color_red}{truncate_multiline("Error", error)}{color_reset}"
+                )
 
         elif trace_type == "tool-invocation":
             tool_input = attributes.get("ai.tool.input")
             if tool_input is not None:
-                result += f"\n{GRAY}{truncate_multiline("Input", tool_input)}{RESET}"
+                result += f"\n{color_gray}{truncate_multiline("Input", tool_input)}{color_reset}"
 
             tool_output = attributes.get("ai.tool.output")
             if tool_output is not None:
-                result += f"\n{GRAY}{truncate_multiline("Output",tool_output)}{RESET}"
+                result += f"\n{color_gray}{truncate_multiline("Output",tool_output)}{color_reset}"
 
             if error := attributes.get("ai.tool.error"):
-                result += f"\n{RED}{truncate_multiline("Error",error)}{RESET}"
+                result += (
+                    f"\n{color_red}{truncate_multiline("Error",error)}{color_reset}"
+                )
 
         elif trace_type in {"converse", "converse-stream"}:
             user_input = attributes.get("ai.user.input")
             if user_input is not None:
-                result += f"\n{GRAY}{truncate_multiline("Input",user_input)}{RESET}"
+                result += f"\n{color_gray}{truncate_multiline("Input",user_input)}{color_reset}"
 
             agent_response = attributes.get("ai.agent.response")
             if agent_response is not None:
-                result += (
-                    f"\n{GRAY}{truncate_multiline("Response",agent_response)}{RESET}"
-                )
+                result += f"\n{color_gray}{truncate_multiline("Response",agent_response)}{color_reset}"
 
             if error := attributes.get("exception.message"):
-                result += f"\n{RED}{truncate_multiline("Error", error)}{RESET}"
+                result += (
+                    f"\n{color_gray}{truncate_multiline("Error", error)}{color_reset}"
+                )
 
         elif trace_type == "cycle":
             cycle_response = attributes.get("ai.agent.cycle.response")
             if cycle_response is not None:
-                result += (
-                    f"\n{GRAY}{truncate_multiline("Response",cycle_response)}{RESET}"
-                )
+                result += f"\n{color_gray}{truncate_multiline("Response",cycle_response)}{color_reset}"
 
             if error := attributes.get("exception.message"):
-                result += f"\n{RED}{truncate_multiline("Error", error)}{RESET}"
+                result += (
+                    f"\n{color_red}{truncate_multiline("Error", error)}{color_reset}"
+                )
 
         elif trace_type == "conversation-history-list":
             conversation_history = attributes.get("ai.conversation.history.messages")
             if conversation_history is not None:
-                result += f"\n{GRAY}{truncate_multiline("Messages",conversation_history)}{RESET}"
+                result += f"\n{color_gray}{truncate_multiline("Messages",conversation_history)}{color_reset}"
 
         elif trace_type == "conversation-history-add":
             conversation_history = attributes.get("ai.conversation.history.message")
             if conversation_history is not None:
-                result += f"\n{GRAY}{truncate_multiline("Message",conversation_history)}{RESET}"
+                result += f"\n{color_gray}{truncate_multiline("Message",conversation_history)}{color_reset}"
 
-        return result + "\n"
+        return result + "\n" + ("\n" if not self.ended_at else "")
 
 
 class TraceScope(NamedTuple):

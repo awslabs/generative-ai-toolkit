@@ -126,15 +126,14 @@ class DynamoDbTracer(BaseTracer):
                 last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
 
             traces: dict[str, Trace] = {}
-            for item in response["Items"]:
+            for item in items:
                 trace = self.item_to_trace(item, traces)
                 # Apply "ai.auth.context" filter:
-                if attribute_filter and "ai.auth.context" in attribute_filter:
-                    if (
-                        trace.attributes.get("ai.auth.context")
-                        != attribute_filter["ai.auth.context"]
-                    ):
-                        continue
+                if attribute_filter and not all(
+                    k in trace.attributes and trace.attributes[k] == v
+                    for k, v in attribute_filter.items()
+                ):
+                    continue
                 traces[trace.span_id] = trace
 
         return sorted(traces.values(), key=lambda t: t.started_at)

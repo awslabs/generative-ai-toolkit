@@ -323,19 +323,25 @@ class NoopTracer(BaseTracer):
         pass
 
 
-class StreamTracer(BaseTracer):
+class StreamTracer(BaseTracer, SnapshotCapableTracer):
 
     def __init__(
         self,
         *,
         stream: TextIO | None = None,
         trace_context_provider: TraceContextProvider | None = None,
+        snapshot_enabled=False,
     ):
         super().__init__(trace_context_provider)
         self._stream = stream or sys.stdout
+        self.snapshot_enabled = snapshot_enabled
 
     def persist(self, trace: Trace):
         raise NotImplementedError
+
+    def persist_snapshot(self, trace: Trace):
+        if self.snapshot_enabled:
+            return self.persist(trace)
 
 
 class StructuredLogsTracer(StreamTracer):
