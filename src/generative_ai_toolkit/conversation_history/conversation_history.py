@@ -163,7 +163,7 @@ class DynamoDbConversationHistory(ConversationHistory):
         }
         try:
             self.table.put_item(
-                Item=item,
+                Item=DynamoDbMapper.serialize(item),
                 ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
             )
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
