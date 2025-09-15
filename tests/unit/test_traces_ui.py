@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from generative_ai_toolkit.ui import chat_messages_from_traces
+from generative_ai_toolkit.ui.lib import chat_messages_from_traces
 
 
 def test_chat_messages_from_traces_converse(mock_multi_agent):

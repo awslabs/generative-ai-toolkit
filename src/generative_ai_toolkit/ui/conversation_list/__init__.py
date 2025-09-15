@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .conversation_history import (
-    ConversationHistory,
-    DynamoDbConversationHistory,
-    InMemoryConversationHistory,
-    SqliteConversationHistory,
+from generative_ai_toolkit.ui.conversation_list.conversation_list import (
+    BedrockConverseConversationDescriber,
+    Conversation,
+    ConversationDescriber,
+    ConversationList,
+    ConversationPage,
+    SqliteConversationList,
 )
 
 __all__ = [
-    "ConversationHistory",
-    "DynamoDbConversationHistory",
-    "InMemoryConversationHistory",
-    "SqliteConversationHistory",
+    "BedrockConverseConversationDescriber",
+    "Conversation",
+    "ConversationDescriber",
+    "ConversationList",
+    "ConversationPage",
+    "SqliteConversationList"
 ]

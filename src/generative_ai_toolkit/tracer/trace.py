@@ -202,6 +202,10 @@ class Trace:
         *,
         inheritable=False,
     ) -> "Trace":
+        if self.ended_at:
+            raise RuntimeError(
+                f"Cannot add attribute to span {self.span_name} that already ended"
+            )
         attribute_value = thread_safe_deepcopy(
             attribute_value, lock=self._deepcopy_lock
         )

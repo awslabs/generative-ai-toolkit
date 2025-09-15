@@ -322,7 +322,7 @@ class BedrockConverseAgent(Agent):
         Parameters
         ----------
         model_id : str
-            The model identifier to use for the agent
+            The model identifier to use for the agent. Pick one from https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html
         system_prompt : str | None, optional
             A prompt that provides instructions or context to the model about the task it should perform, or the persona it should adopt during the conversation.
         max_tokens : int | None, optional
@@ -584,10 +584,15 @@ class BedrockConverseAgent(Agent):
         def get_traces_recursive(
             agent: AgentAsTool, attribute_filter: Mapping[str, Any]
         ):
-            traces = list(agent.tracer.get_traces(attribute_filter=attribute_filter))
+            traces = {
+                trace.span_id: trace
+                for trace in agent.tracer.get_traces(attribute_filter=attribute_filter)
+            }
 
-            subagent_invocations: dict[AgentAsTool, set[str]] = defaultdict(set)
-            for trace in traces:
+            subagent_invocations: dict[AgentAsTool, dict[str, Trace]] = defaultdict(
+                dict
+            )
+            for trace in traces.values():
                 if trace.attributes.get(
                     "ai.trace.type"
                 ) == "tool-invocation" and trace.attributes.get("ai.tool.subagent"):
@@ -595,10 +600,10 @@ class BedrockConverseAgent(Agent):
                     subagent = agent.tools[subagent_name]
                     if not isinstance(subagent, AgentAsTool):
                         continue
-                    subagent_invocations[subagent].add(trace.span_id)
+                    subagent_invocations[subagent][trace.span_id] = trace
 
-            for subagent, span_ids in subagent_invocations.items():
-                for span_id in span_ids:
+            for subagent, subagent_parent_traces in subagent_invocations.items():
+                for span_id in subagent_parent_traces:
                     subagent_traces = get_traces_recursive(
                         subagent,
                         {
@@ -606,7 +611,19 @@ class BedrockConverseAgent(Agent):
                             "ai.agent.hierarchy.parent.span.id": span_id,
                         },
                     )
-                    traces.extend(subagent_traces)
+                    # Add links to parent traces
+                    for subagent_trace in subagent_traces.values():
+                        if (
+                            not subagent_trace.parent_span
+                            and "ai.agent.hierarchy.parent.span.id"
+                            in subagent_trace.attributes
+                        ):
+                            subagent_trace.parent_span = subagent_parent_traces[
+                                subagent_trace.attributes[
+                                    "ai.agent.hierarchy.parent.span.id"
+                                ]
+                            ]
+                    traces.update(subagent_traces)
             return traces
 
         return sorted(
@@ -616,7 +633,7 @@ class BedrockConverseAgent(Agent):
                     "ai.conversation.id": self._conversation_history.conversation_id,
                     "ai.auth.context": self._conversation_history.auth_context,
                 },
-            ),
+            ).values(),
             key=lambda trace: trace.started_at,
         )
 
@@ -995,57 +1012,60 @@ class BedrockConverseAgent(Agent):
                         trace.add_attribute("ai.llm.response.error", err.response)
                         raise
 
-            # Capture text to show user
-            message = response["output"].get("message")
-            if message:
-                cycle_text = ""
-                for msg_content in message["content"]:
-                    if self.include_reasoning_text_within_thinking_tags:
-                        reasoning_text = (
-                            msg_content.get("reasoningContent", {})
-                            .get("reasoningText", {})
-                            .get("text")
+                # Capture text to show user
+                message = response["output"].get("message")
+                if message:
+                    cycle_text = ""
+                    for msg_content in message["content"]:
+                        if self.include_reasoning_text_within_thinking_tags:
+                            reasoning_text = (
+                                msg_content.get("reasoningContent", {})
+                                .get("reasoningText", {})
+                                .get("text")
+                            )
+                            if reasoning_text:
+                                cycle_text += (
+                                    f"<thinking>\n{reasoning_text}\n</thinking>\n"
+                                )
+                        if "text" in msg_content and msg_content["text"]:
+                            cycle_text += msg_content["text"]
+                    if cycle_text:
+                        texts.append(cycle_text)
+                        cycle_trace.add_attribute("ai.agent.cycle.response", cycle_text)
+                        cycle_trace.emit_snapshot()
+                        current_trace.add_attribute(
+                            "ai.agent.response",
+                            "\n".join(texts),
                         )
-                        if reasoning_text:
-                            cycle_text += f"<thinking>\n{reasoning_text}\n</thinking>\n"
-                    if "text" in msg_content and msg_content["text"]:
-                        cycle_text += msg_content["text"]
-                if cycle_text:
-                    texts.append(cycle_text)
-                    cycle_trace.add_attribute("ai.agent.cycle.response", cycle_text)
-                    cycle_trace.emit_snapshot()
-                    current_trace.add_attribute(
-                        "ai.agent.response",
-                        "\n".join(texts),
-                    )
-                    current_trace.emit_snapshot()
-                self._add_message(message)
+                        current_trace.emit_snapshot()
+                    self._add_message(message)
 
-                if response["stopReason"] == "tool_use":
-                    tool_results = self._invoke_tools(
-                        [
-                            msg_content
-                            for msg_content in message["content"]
-                            if "toolUse" in msg_content
-                        ],
-                        tools_available,
-                        stop_event=stop_event,
-                    )
-                    self._add_message(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "toolResult": tool_result,
-                                }
-                                for tool_result in tool_results
-                            ],
-                        },
-                    )
-                    request["messages"] = list(self.messages)
-                    continue
+                    tool_invoke_instructions = [
+                        msg_content
+                        for msg_content in message["content"]
+                        if "toolUse" in msg_content
+                    ]
+                    if tool_invoke_instructions:
+                        tool_results = self._invoke_tools(
+                            tool_invoke_instructions,
+                            tools_available,
+                            stop_event=stop_event,
+                        )
+                        self._add_message(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "toolResult": tool_result,
+                                    }
+                                    for tool_result in tool_results
+                                ],
+                            },
+                        )
+                        request["messages"] = list(self.messages)
+                        continue
 
-                elif response["stopReason"] in (
+                if response["stopReason"] in (
                     "end_turn",
                     "max_tokens",
                     "stop_sequence",
@@ -1462,9 +1482,12 @@ class BedrockConverseAgent(Agent):
                     texts.pop()
                 self._add_message(message)
 
-                if stop_reason == "tool_use":
+                tool_invoke_instructions = [
+                    message for message in content_blocks if "toolUse" in message
+                ]
+                if tool_invoke_instructions:
                     tool_results = self._invoke_tools(
-                        [message for message in content_blocks if "toolUse" in message],
+                        tool_invoke_instructions,
                         tools_available,
                         stop_event=stop_event,
                     )

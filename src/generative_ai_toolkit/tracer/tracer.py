@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import inspect
+import os
+import sqlite3
 import sys
 import threading
 import traceback
@@ -21,6 +23,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from functools import wraps
+from pathlib import Path
 from queue import Queue, ShutDown
 from typing import (
     Any,
@@ -41,6 +44,7 @@ from generative_ai_toolkit.tracer.context import (
     TraceContextUpdate,
 )
 from generative_ai_toolkit.tracer.trace import Trace, TraceScope
+from generative_ai_toolkit.utils.json import JsonBytes
 from generative_ai_toolkit.utils.logging import SimpleLogger
 
 
@@ -237,8 +241,6 @@ class ContextAwareSpanPersistor:
         return self.trace
 
     def __exit__(self, exc_type, exc_value, _traceback):
-        self.trace.ended_at = datetime.now(UTC)
-        self._reset()
         if exc_type:
             self.trace.span_status = "ERROR"
             self.trace.add_attribute("exception.type", exc_type.__name__)
@@ -246,6 +248,8 @@ class ContextAwareSpanPersistor:
             self.trace.add_attribute(
                 "exception.traceback", "".join(traceback.format_tb(_traceback))
             )
+        self.trace.ended_at = datetime.now(UTC)
+        self._reset()
         self.persistor(self.trace)
 
 
@@ -305,7 +309,7 @@ class BaseTracer(Tracer, SnapshotCapableTracer):
     ) -> Sequence[Trace]:
         raise NotImplementedError(
             f"You're using the {self.__class__.__name__} tracer, that doesn't support get_traces(). "
-            "Use another tracer, such as the InMemoryTracer or the DynamoDBTracer. "
+            "Use another tracer, such as the InMemoryTracer, SqliteTracer or the DynamoDBTracer. "
         )
 
     def persist(self, trace: Trace):
@@ -395,6 +399,223 @@ class InMemoryTracer(BaseTracer):
                 sorted(self._memory, key=lambda t: t.started_at),
             )
         )
+
+
+class SqliteTracer(BaseTracer):
+
+    def __init__(
+        self,
+        *,
+        db_path: str | Path | None = None,
+        identifier: str | None = None,
+        create_tables: bool = True,
+        trace_context_provider: TraceContextProvider | None = None,
+    ):
+        super().__init__(trace_context_provider=trace_context_provider)
+        self.db_path = (
+            Path(db_path)
+            if db_path is not None
+            else Path(os.getcwd()) / "conversations.db"
+        )
+        self.identifier = identifier
+
+        if create_tables:
+            self._create_tables()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if not hasattr(self, "_locals"):
+            self._locals = threading.local()
+        if not hasattr(self._locals, "conn"):
+            self._locals.conn = sqlite3.connect(self.db_path)
+            self._locals.conn.row_factory = sqlite3.Row
+        return self._locals.conn
+
+    def _create_tables(self) -> None:
+        with self.lock, self.conn as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS traces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trace_id TEXT NOT NULL,
+                    span_id TEXT NOT NULL,
+                    span_kind TEXT NOT NULL,
+                    span_name TEXT NOT NULL,
+                    span_status TEXT NOT NULL,
+                    scope_name TEXT,
+                    scope_version TEXT,
+                    resource_attributes BLOB,
+                    parent_span_id TEXT,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    attributes BLOB,
+                    identifier TEXT,
+                    conversation_id TEXT
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_traces_trace_id_started_at
+                ON traces (trace_id, started_at)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_traces_conversation_id_started_at
+                ON traces (conversation_id, started_at)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_traces_trace_id
+                ON traces (trace_id)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_traces_span_id
+                ON traces (span_id)
+                """
+            )
+
+            conn.commit()
+
+    def __repr__(self) -> str:
+        return f"SqliteTracer(db_path={self.db_path}, identifier={self.identifier})"
+
+    def persist(self, trace: Trace) -> None:
+        with self.lock, self.conn as conn:
+            conn.execute(
+                """
+                INSERT INTO traces
+                (trace_id,
+                 span_id,
+                 span_kind,
+                 span_name,
+                 span_status,
+                 scope_name,
+                 scope_version,
+                 resource_attributes,
+                 parent_span_id,
+                 started_at,
+                 ended_at,
+                 attributes,
+                 identifier,
+                 conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace.trace_id,
+                    trace.span_id,
+                    trace.span_kind,
+                    trace.span_name,
+                    trace.span_status,
+                    trace.scope.name,
+                    trace.scope.version,
+                    JsonBytes.dumps(dict(trace.resource_attributes)),
+                    trace.parent_span.span_id if trace.parent_span else None,
+                    trace.started_at.isoformat(),
+                    trace.ended_at.isoformat() if trace.ended_at else None,
+                    JsonBytes.dumps(dict(trace.attributes)),
+                    self.identifier,
+                    trace.attributes.get("ai.conversation.id") or None,
+                ),
+            )
+            conn.commit()
+
+    def get_traces(
+        self,
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
+    ) -> Sequence[Trace]:
+        query_parts = [
+            """
+            SELECT trace_id,
+                    span_id,
+                    span_kind,
+                    span_name,
+                    span_status,
+                    scope_name,
+                    scope_version,
+                    resource_attributes,
+                    parent_span_id,
+                    started_at,
+                    ended_at,
+                    attributes,
+                    identifier,
+                    conversation_id
+            FROM traces
+            WHERE (identifier IS ? OR (identifier IS NULL AND ? IS NULL))
+            """
+        ]
+        params = [self.identifier, self.identifier]
+
+        if trace_id:
+            query_parts.append("AND trace_id = ?")
+            params.append(trace_id)
+        elif attribute_filter and "ai.conversation.id" in attribute_filter:
+            query_parts.append("AND conversation_id = ?")
+            params.append(attribute_filter["ai.conversation.id"])
+        else:
+            raise ValueError(
+                "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
+            )
+
+        query_parts.append("ORDER BY started_at ASC")
+        query = " ".join(query_parts)
+
+        with self.lock, self.conn as conn:
+            cursor = conn.execute(query, params)
+
+            traces: dict[str, Trace] = {}
+            for row in cursor.fetchall():
+                attributes = (
+                    JsonBytes.loads(row["attributes"]) if row["attributes"] else {}
+                )
+                resource_attributes = (
+                    JsonBytes.loads(row["resource_attributes"])
+                    if row["resource_attributes"]
+                    else {}
+                )
+
+                if attribute_filter:
+                    if not all(
+                        k in attributes and attributes[k] == v
+                        for k, v in attribute_filter.items()
+                    ):
+                        continue
+
+                started_at = datetime.fromisoformat(row["started_at"])
+                ended_at = (
+                    datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None
+                )
+
+                trace = Trace(
+                    span_name=row["span_name"],
+                    span_kind=row["span_kind"],
+                    trace_id=row["trace_id"],
+                    span_id=row["span_id"],
+                    parent_span=(
+                        traces.get(row["parent_span_id"])
+                        if row["parent_span_id"]
+                        else None
+                    ),
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    attributes=attributes,
+                    span_status=row["span_status"],
+                    resource_attributes=resource_attributes,
+                    scope=TraceScope(row["scope_name"], row["scope_version"]),
+                )
+
+                traces[trace.span_id] = trace
+
+        return sorted(traces.values(), key=lambda t: t.started_at)
 
 
 @runtime_checkable

@@ -47,45 +47,43 @@ class DynamoDbTracer(BaseTracer):
         self.conversation_id_gsi_name = conversation_id_gsi_name
 
     def persist(self, trace: Trace):
-        with self.lock:
-            item = {
-                "pk": f"TRACE#{trace.trace_id}",
-                "sk": f"SPAN#{self.identifier or "_"}#{int(trace.started_at.timestamp() * 1_000_000):017x}#{trace.span_id}",
-                "trace_id": trace.trace_id,
-                "span_id": trace.span_id,
-                "span_kind": trace.span_kind,
-                "span_name": trace.span_name,
-                "span_status": trace.span_status,
-                "scope_name": trace.scope.name,
-                "scope_version": trace.scope.version,
-                "resource_attributes": trace.resource_attributes,
-                "parent_span_id": (
-                    trace.parent_span.span_id if trace.parent_span else None
-                ),
-                "started_at": trace.started_at,
-                "ended_at": trace.ended_at,
-                "duration_ms": trace.duration_ms,
-                "attributes": trace.attributes,
-                "identifier": self.identifier,
-            }
-            if self.ttl is not None:
-                item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
+        item = {
+            "pk": f"TRACE#{trace.trace_id}",
+            "sk": f"SPAN#{self.identifier or "_"}#{int(trace.started_at.timestamp() * 1_000_000):017x}#{trace.span_id}",
+            "trace_id": trace.trace_id,
+            "span_id": trace.span_id,
+            "span_kind": trace.span_kind,
+            "span_name": trace.span_name,
+            "span_status": trace.span_status,
+            "scope_name": trace.scope.name,
+            "scope_version": trace.scope.version,
+            "resource_attributes": trace.resource_attributes,
+            "parent_span_id": (
+                trace.parent_span.span_id if trace.parent_span else None
+            ),
+            "started_at": trace.started_at,
+            "ended_at": trace.ended_at,
+            "duration_ms": trace.duration_ms,
+            "attributes": trace.attributes,
+            "identifier": self.identifier,
+        }
+        if self.ttl is not None:
+            item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
 
-            # Maintain as top level attribute for querying with GSI:
-            if "ai.conversation.id" in trace.attributes:
-                item["conversation_id"] = trace.attributes["ai.conversation.id"]
+        # Maintain as top level attribute for querying with GSI:
+        if "ai.conversation.id" in trace.attributes:
+            item["conversation_id"] = trace.attributes["ai.conversation.id"]
 
-            try:
+        try:
+            with self.lock:
                 self.table.put_item(
                     Item=DynamoDbMapper.serialize(item),
                     ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
                 )
-            except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-                raise ValueError(f"Table {self.table.name} does not exist") from e
-            except (
-                self.table.meta.client.exceptions.ConditionalCheckFailedException
-            ) as e:
-                raise ValueError(f"Trace {trace.trace_id} already exists") from e
+        except self.table.meta.client.exceptions.ResourceNotFoundException as e:
+            raise ValueError(f"Table {self.table.name} does not exist") from e
+        except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
+            raise ValueError(f"Trace {trace.trace_id} already exists") from e
 
     def get_traces(
         self,

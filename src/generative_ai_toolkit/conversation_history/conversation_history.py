@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Unpack
 
 import boto3
@@ -25,6 +28,7 @@ if TYPE_CHECKING:
 
 from generative_ai_toolkit.context import AuthContext
 from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
+from generative_ai_toolkit.utils.json import JsonBytes
 from generative_ai_toolkit.utils.ulid import Ulid
 
 
@@ -111,6 +115,127 @@ class InMemoryConversationHistory(ConversationHistory):
         return self._message_cache.get(self._auth_context["principal_id"], {}).get(
             self._conversation_id, []
         )
+
+    def reset(self) -> None:
+        self._conversation_id = Ulid().ulid
+
+
+class SqliteConversationHistory(ConversationHistory):
+
+    def __init__(
+        self,
+        *,
+        db_path: str | Path | None = None,
+        identifier: str | None = None,
+        create_tables: bool = True,
+    ):
+        self.db_path = (
+            Path(db_path)
+            if db_path is not None
+            else Path(os.getcwd()) / "conversations.db"
+        )
+        self.identifier = identifier
+        self._conversation_id = Ulid().ulid
+        self._auth_context: AuthContext = {"principal_id": None}
+
+        if create_tables:
+            self._create_tables()
+
+    def _create_tables(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    identifier TEXT,
+                    timestamp_ms INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content BLOB NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_messages_conversation
+                ON messages (conversation_id, identifier, timestamp_ms)
+                """
+            )
+
+            conn.commit()
+
+    def __repr__(self) -> str:
+        return f"SqliteConversationHistory(db_path={self.db_path}, identifier={self.identifier})"
+
+    @property
+    def conversation_id(self) -> str:
+        return self._conversation_id
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        self._conversation_id = conversation_id
+
+    @property
+    def auth_context(self) -> AuthContext:
+        return self._auth_context
+
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
+        self._auth_context = auth_context
+
+    def add_message(self, msg: "MessageUnionTypeDef") -> None:
+        now = datetime.now(UTC)
+        timestamp_ms = int(now.timestamp() * 1000)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO messages
+                (conversation_id, identifier, timestamp_ms, created_at, role, content)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self._conversation_id,
+                    self.identifier,
+                    timestamp_ms,
+                    now.isoformat(),
+                    msg["role"],
+                    JsonBytes.dumps(msg["content"]),
+                ),
+            )
+            conn.commit()
+
+    @property
+    def messages(self) -> Sequence["MessageUnionTypeDef"]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            cursor = conn.execute(
+                """
+                SELECT role, content
+                FROM messages
+                WHERE conversation_id = ?
+                    AND (identifier IS ? OR (identifier IS NULL AND ? IS NULL))
+                ORDER BY timestamp_ms ASC
+                """,
+                (
+                    self._conversation_id,
+                    self.identifier,
+                    self.identifier,
+                ),
+            )
+
+            messages = []
+            for row in cursor.fetchall():
+
+                messages.append(
+                    {
+                        "role": row["role"],
+                        "content": JsonBytes.loads(row["content"]),
+                    }
+                )
+
+            return messages
 
     def reset(self) -> None:
         self._conversation_id = Ulid().ulid

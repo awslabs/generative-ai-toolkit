@@ -38,7 +38,7 @@ from generative_ai_toolkit.tracer.tracer import (
 from generative_ai_toolkit.utils.llm_response import get_text
 
 if TYPE_CHECKING:
-    from mypy_boto3_bedrock_runtime.type_defs import MessageOutputTypeDef
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef
 
 
 class CaseTrace(Trace):
@@ -107,7 +107,7 @@ class _AgentLikeWithReset(_AgentLike, Protocol):
 class _AgentLikeWithMessages(_AgentLike, Protocol):
 
     @property
-    def messages(self) -> Sequence["MessageOutputTypeDef"]: ...
+    def messages(self) -> Sequence["MessageUnionTypeDef"]: ...
 
 
 AgentLike = _AgentLike | _AgentLikeWithReset | _AgentLikeWithMessages
@@ -130,7 +130,7 @@ class Case:
     expected_agent_responses_per_turn: list[Sequence[str]]
     converse_kwargs: Mapping
     validate: ValidatorFunc | Sequence[ValidatorFunc] | None
-    user_input_producer: Callable[[Sequence["MessageOutputTypeDef"]], str] | None
+    user_input_producer: Callable[[Sequence["MessageUnionTypeDef"]], str] | None
 
     def __init__(
         self,
@@ -138,7 +138,7 @@ class Case:
         *,
         name: str | None = None,
         user_input_producer: (
-            Callable[[Sequence["MessageOutputTypeDef"]], str] | None
+            Callable[[Sequence["MessageUnionTypeDef"]], str] | None
         ) = None,
         overall_expectations: str | None = None,
         converse_kwargs: Mapping | None = None,
@@ -325,9 +325,7 @@ def case(
     user_inputs: Sequence[str] | None = None,
     overall_expectations: str | None = None,
     converse_kwargs: Mapping | None = None,
-    user_input_producer: (
-        Callable[[Sequence["MessageOutputTypeDef"]], str] | None
-    ) = None,
+    user_input_producer: Callable[[Sequence["MessageUnionTypeDef"]], str] | None = None,
 ):
     def decorator(func: ValidatorFunc):
         return Case(
@@ -358,7 +356,7 @@ def user_conversation_from_trace(trace: Trace):
     )
 
 
-def user_conversation_from_messages(messages: Iterable["MessageOutputTypeDef"]):
+def user_conversation_from_messages(messages: Iterable["MessageUnionTypeDef"]):
     user_conversation: list[ConversationMessage] = []
 
     for msg in messages:
@@ -393,7 +391,7 @@ class UserInputProducer:
         self.max_nr_turns = max_nr_turns
 
     def _format_conversation_history(
-        self, messages: Sequence["MessageOutputTypeDef"]
+        self, messages: Sequence["MessageUnionTypeDef"]
     ) -> str:
         turns = []
         for msg in user_conversation_from_messages(messages):
@@ -414,7 +412,7 @@ class UserInputProducer:
         )
 
     def _should_stop_conversation(
-        self, messages: Sequence["MessageOutputTypeDef"] | None = None
+        self, messages: Sequence["MessageUnionTypeDef"] | None = None
     ) -> bool:
         if not messages:
             return False
@@ -488,7 +486,7 @@ class UserInputProducer:
         intent_satisfied = "ABORT" in response
         return intent_satisfied
 
-    def __call__(self, messages: Sequence["MessageOutputTypeDef"] | None = None) -> str:
+    def __call__(self, messages: Sequence["MessageUnionTypeDef"] | None = None) -> str:
         if messages:
             if self._should_stop_conversation(messages):
                 return ""
@@ -614,10 +612,12 @@ class Expect:
         self._traces_per_parent_span_id = {}
 
         self._traces = sorted(traces, key=lambda trace: trace.started_at)
-        self._parent_span_ids = list(dict.fromkeys(
-            trace.attributes.get("ai.agent.hierarchy.parent.span.id")
-            for trace in self._traces
-        ))
+        self._parent_span_ids = list(
+            dict.fromkeys(
+                trace.attributes.get("ai.agent.hierarchy.parent.span.id")
+                for trace in self._traces
+            )
+        )
         for parent_span_id in self._parent_span_ids:
             self._traces_per_parent_span_id[parent_span_id] = [
                 trace

@@ -263,6 +263,18 @@ response = agent.converse("What are some touristic highlights there?")
 print(response) # "Here are some of the major tourist highlights and attractions in Paris, France:\n\n- Eiffel Tower - One of the most famous monuments ..."
 ```
 
+There is also the `SqliteConversationHistory` class that will store conversations in a local database (by default `conversations.db`), in the current working directory:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.conversation_history import SqliteConversationHistory
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    conversation_history=SqliteConversationHistory()
+)
+```
+
 ##### Viewing the conversation history
 
 You can manually view the conversation history like so:
@@ -880,7 +892,7 @@ That is the root trace of the conversation, that captures user input and agent r
 
 ##### Available tracers
 
-The Generative AI Toolkit includes several tracers out-of-the-box, e.g. the `DynamoDBTracer` that saves traces to DynamoDB, and the `OtlpTracer` that sends traces to an OpenTelemetry collector (e.g. to forward them to AWS X-Ray).
+The Generative AI Toolkit includes several tracers out-of-the-box, e.g. the `SqliteTracer` that stores traces locally in a SQLite DB file, the `DynamoDBTracer` that saves traces to DynamoDB, the `OtlpTracer` that sends traces to an OpenTelemetry collector (e.g. to forward them to AWS X-Ray), and the `TeeTracer` that allows you to use multiple tracers at the same time.
 
 For a full run-down of all out-of-the-box tracers and how to use them, view [examples/tracing101.ipynb](examples/tracing101.ipynb).
 
@@ -2050,7 +2062,7 @@ This interactive UI is meant for development and testing phases, to quickly iter
 
 <img src="./assets/images/ui-chat.png" alt="UI Chat Interface Screenshot" title="UI Chat Interface" width="1200"/>
 
-##### Concurrent conversations
+##### Recommended: use an agent factory
 
 To support concurrent conversations, e.g. in multiple browser tabs, pass an agent factory instead of an agent instance:
 
@@ -2071,6 +2083,61 @@ def agent_factory():
 # Create and launch the chat UI
 demo = chat_ui(agent_factory)
 demo.queue(default_concurrency_limit=10).launch(inbrowser=True)
+```
+
+##### Conversation List
+
+The chat UI includes a conversation list feature that allows you to manage and navigate between multiple conversations:
+
+<img src="./assets/images/ui-conversation-list.png" alt="UI Conversation List Screenshot" title="UI Conversation List" width="1200"/>
+
+Once added, the conversation list can be opened from the `chat_ui`. After each conversation turn between user and agent, the conversation will be summarized and added to the conversation list.
+
+Enable the conversation list like so:
+
+```python
+from generative_ai_toolkit.ui import chat_ui
+from generative_ai_toolkit.ui.conversation_list import SqliteConversationList, BedrockConverseConversationDescriber
+from generative_ai_toolkit.ui.conversation_list.dynamodb import DynamoDbConversationList
+
+
+# The `SqliteConversationList` stores conversations in a SQLite file
+# (by default `conversations.db`) in the current working directory:
+conversation_list = SqliteConversationList(
+    db_path="conversations.db",
+    describer=BedrockConverseConversationDescriber(
+        model_id="eu.amazon.nova-lite-v1:0"
+    )
+)
+
+# Alternatively, use the DynamoDbConversationList (see notes below):
+conversation_list = DynamoDbConversationList(
+    table_name="my-conversations",
+    describer=BedrockConverseConversationDescriber(
+        model_id="eu.amazon.nova-lite-v1:0"
+    )
+)
+
+# Launch chat UI with conversation list
+demo = chat_ui(agent, conversation_list=conversation_list)
+demo.launch(inbrowser=True)
+```
+
+When using the `DynamoDbConversationList` you must ensure the table exists with string keys `pk` and `sk`. The table must have a GSI on `pk` and `updated_at`. The following table definition would work (note that it also has a GSI on `by_conversation_id` so the table can be used for tracing too):
+
+```
+aws dynamodb create-table \
+  --table-name "my-conversations" \
+  --attribute-definitions \
+    AttributeName=pk,AttributeType=S \
+    AttributeName=sk,AttributeType=S \
+    AttributeName=conversation_id,AttributeType=S \
+    AttributeName=updated_at,AttributeType=S \
+  --key-schema \
+    AttributeName=pk,KeyType=HASH \
+    AttributeName=sk,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --global-secondary-indexes '[{"IndexName":"by_conversation_id","KeySchema":[{"AttributeName":"conversation_id","KeyType":"HASH"},{"AttributeName":"sk","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"}},{"IndexName":"by_updated_at","KeySchema":[{"AttributeName":"pk","KeyType":"HASH"},{"AttributeName":"updated_at","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"}}]'
 ```
 
 ### 2.10 Mocking and Testing
