@@ -60,15 +60,15 @@ def test_chat_messages_from_traces_converse(mock_multi_agent):
         populate_mock()
         list(method("I want to go to Amsterdam, what is up there?"))
 
-        *_, messages = chat_messages_from_traces(
+        chat_messages = chat_messages_from_traces(
             supervisor.agent.traces,
         )
 
-        assert len(messages) == 16
-        text = messages[-1].content
+        assert len(chat_messages.messages) == 16
+        text = chat_messages.messages[-1].content
         assert (
             type(text) is str
             and text.strip()
             == "The weather in Amsterdam will be Sunny and the coming events are bla bla bla"
         )
-        assert messages[-1].role == "assistant"
+        assert chat_messages.messages[-1].role == "assistant"
