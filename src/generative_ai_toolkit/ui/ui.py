@@ -13,10 +13,15 @@
 # limitations under the License.
 
 import functools
+import json
 import textwrap
+import time
 from collections.abc import Callable, Iterable, Sequence
 from threading import Event
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef
 
 import gradio as gr
 
@@ -32,6 +37,7 @@ from generative_ai_toolkit.ui.lib import (
     chat_messages_from_conversation_measurements,
     chat_messages_from_traces,
     ensure_running_event_loop,
+    find_nearest_folded_open_message,
     format_date,
 )
 
@@ -41,20 +47,35 @@ def chat_ui(
     *,
     show_top_bar=True,
     show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
-    max_concurrent_conversations: int | None = None,
-    conversation_list: ConversationList | None = None,
+    conversation_list: ConversationList | Callable[[], ConversationList] | None = None,
     title="Generative AI Toolkit",
 ):
 
-    @functools.lru_cache(maxsize=max_concurrent_conversations)
-    def ensure_agent_instance(session_hash: str | None):
+    def ensure_agent_instance(conversation_id: str | None = None):
         if isinstance(agent, Agent):
-            return agent
-        return agent()
+            agent_instance = agent
+        else:
+            agent_instance = agent()
+
+        if conversation_id is not None:
+            agent_instance.set_conversation_id(conversation_id)
+
+        return agent_instance
+
+    def conversation_list_instance():
+        if not conversation_list:
+            return None
+        agent_instance = ensure_agent_instance()
+        if not isinstance(conversation_list, ConversationList):
+            conv_list = conversation_list()
+        else:
+            conv_list = conversation_list
+        conv_list.set_auth_context(**agent_instance.auth_context)
+        return conv_list
 
     ensure_running_event_loop()
 
-    def user_submit(user_input: str, messages: list[gr.ChatMessage]):
+    def user_submit(user_input: str, messages: list[gr.MessageDict]):
         return (
             gr.update(
                 value="", interactive=False, submit_btn=False, stop_btn=True
@@ -63,19 +84,28 @@ def chat_ui(
             Event(),
             messages
             + [
-                gr.ChatMessage(
+                gr.MessageDict(
                     role="user", content=user_input, metadata={"title": "User"}
                 )
             ],
         )
 
-    def describe_conversation(
-        conversation_id: str, last_user_input: str, messages: list[gr.ChatMessage]
-    ):
-        if not conversation_list:
+    def describe_conversation(conversation_id: str, chatbot: list[gr.MessageDict]):
+        conv_list = conversation_list_instance()
+        if not conv_list:
             return gr.update()
-        conversation = conversation_list.add_conversation(
-            conversation_id, [{"role": "user", "content": [{"text": last_user_input}]}]
+
+        messages_to_describe = [
+            {"role": msg["role"], "content": [{"text": msg["content"]}]}
+            for msg in chatbot
+            if msg["role"] in {"user", "assistant"}
+            and msg.get("metadata", {}).get("title") in {"User", "Assistant"}
+            and isinstance(msg["content"], str)
+        ]
+
+        conversation = conv_list.add_conversation(
+            conversation_id,
+            cast("Sequence[MessageUnionTypeDef]", messages_to_describe),
         )
         return conversation.description
 
@@ -85,32 +115,73 @@ def chat_ui(
         return gr.update(stop_btn=False)
 
     def assistant_stream(
-        request: gr.Request,
+        conversation_id: str,
         traces_state: list[Trace],
         user_input: str,
         stop_event: Event | None,
+        yield_snapshot_every=0.25,
     ):
-        current_agent_instance = ensure_agent_instance(request.session_hash)
+        current_agent_instance = ensure_agent_instance(conversation_id)
         if not user_input:
             yield traces_state
             return
 
+        last_snapshot_yielded = 0.0
         traces: dict[str, Trace] = {trace.span_id: trace for trace in traces_state}
         for trace in current_agent_instance.converse_stream(
             user_input, stream="traces", stop_event=stop_event
         ):
             traces[trace.span_id] = trace
+            if (
+                not trace.ended_at
+                and trace.attributes.get("ai.trace.type") == "llm-invocation"
+            ):
+                # Throttle display of snapshots for LLM invocations only.
+                # LLM invocations typically generate many intermediate traces during
+                # token streaming, but tool invocations and other operations benefit
+                # from immediate display to show responsive agent behavior.
+                now = time.monotonic()
+                if last_snapshot_yielded + yield_snapshot_every > now:
+                    continue
+                last_snapshot_yielded = now
             yield list(traces.values())
 
     def traces_state_change(
         traces: Iterable[Trace],
         show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     ):
-        *_, messages = chat_messages_from_traces(traces, show_traces=show_traces)
+        chat_messages = chat_messages_from_traces(traces, show_traces=show_traces)
+        messages = list(chat_messages.messages)[:]
+        if (
+            messages
+            and chat_messages.assistant_busy
+            and messages[-1].metadata.get("title") != "Assistant"
+        ):
+            # Gradio currently (Oct 2025) doesn't allow you to mark a chat message as pending
+            # (to show the spinner in the title) without folding it open at the same time––which I don't want,
+            # because folding open LLM-invocation messages will show **a lot** of data and is meant for debugging.
+            # Nor does gradio make it easy to control progress indicators on our chatbot from trigger code.
+            # Therefore, we'll add an empty but pending chat message with spinner to show
+            # clearly that the assistant is busy.
+            progress_message = gr.ChatMessage(
+                role="assistant",
+                content="",
+                metadata={
+                    "title": "Assistant",
+                    "status": "pending",  # This makes the message have a spinner
+                },
+            )
+            # Try to show the spinner message under the nearest folded open message:
+            parent_id = find_nearest_folded_open_message(messages)
+            if parent_id:
+                progress_message.metadata["parent_id"] = parent_id
+            messages.append(progress_message)
         return messages, gr.update(interactive=bool(messages))
 
-    def reset_agent(request: gr.Request):
-        current_agent_instance = ensure_agent_instance(request.session_hash)
+    def reset_agent(stop_event: Event | None):
+        if stop_event:
+            stop_event.set()
+        current_agent_instance = ensure_agent_instance()
         current_agent_instance.reset()
         return (
             gr.update(
@@ -122,14 +193,12 @@ def chat_ui(
             "",
         )
 
-    def load_conversation_id(
-        request: gr.Request, conversation_id: str
-    ) -> tuple[Sequence[Trace], str]:
-        current_agent_instance = ensure_agent_instance(request.session_hash)
-        current_agent_instance.set_conversation_id(conversation_id)
+    def load_conversation_id(conversation_id: str) -> tuple[Sequence[Trace], str]:
+        current_agent_instance = ensure_agent_instance(conversation_id)
+        conv_list = conversation_list_instance()
         conversation: Conversation | None = None
-        if conversation_list:
-            conversation = conversation_list.get_conversation(conversation_id)
+        if conv_list:
+            conversation = conv_list.get_conversation(conversation_id)
         return current_agent_instance.traces, (
             conversation.description if conversation else ""
         )
@@ -139,7 +208,8 @@ def chat_ui(
         previous_page_tokens: list[Any],
         requested_page_token: Any,
     ):
-        if not conversation_list:
+        conv_list = conversation_list_instance()
+        if not conv_list:
             return [None, [], ConversationPage()]
 
         if requested_page_token != current_page_token:
@@ -155,7 +225,7 @@ def chat_ui(
         return [
             requested_page_token,
             previous_page_tokens,
-            conversation_list.get_conversations(next_page_token=requested_page_token),
+            conv_list.get_conversations(next_page_token=requested_page_token),
         ]
 
     def get_remove_conversation_list_item(
@@ -166,8 +236,9 @@ def chat_ui(
             previous_page_tokens: list[Any],
             requested_page_token: Any,
         ):
-            if conversation_list:
-                conversation_list.remove_conversation(conversation_id)
+            conv_list = conversation_list_instance()
+            if conv_list:
+                conv_list.remove_conversation(conversation_id)
             return load_page(
                 current_page_token, previous_page_tokens, requested_page_token
             )
@@ -175,10 +246,11 @@ def chat_ui(
         return bound
 
     def set_page_size(page_size: int):
-        if not conversation_list:
+        conv_list = conversation_list_instance()
+        if not conv_list:
             return ConversationPage(), None
-        conversation_list.set_page_size(page_size)
-        return conversation_list.get_conversations(), None
+        conv_list.set_page_size(page_size)
+        return conv_list.get_conversations(), None
 
     js_set_conversation_id_as_query_param = textwrap.dedent(
         """
@@ -198,11 +270,11 @@ def chat_ui(
             if (conversationDescription) {{
                 document.title = conversationDescription;
             }} else {{
-                document.title = '{title}';
+                document.title = {title};
             }}
         }}
         """
-    ).format(title=title)
+    ).format(title=json.dumps(title))
 
     with gr.Blocks(
         theme="origin",
@@ -280,15 +352,9 @@ def chat_ui(
                 gr.Markdown("## Your previous conversations")
                 with gr.Column(scale=0, min_width=60):
                     gr.Markdown("Page size:")
-                current_page_size = (
-                    conversation_list.page_size if conversation_list else 0
-                )
                 page_size_drop_down = gr.Dropdown(
-                    choices=[
-                        (str(psize), psize)
-                        for psize in sorted({current_page_size, 20, 50, 100})
-                    ],
-                    value=current_page_size,
+                    choices=[(str(psize), psize) for psize in sorted({20, 50, 100})],
+                    value=20,
                     label="Page size",
                     filterable=False,
                     container=False,
@@ -504,14 +570,11 @@ def chat_ui(
             outputs=[conversation_list_btn],
         )
 
-        def get_conversation_list(
-            request: gr.Request,
-        ) -> ConversationPage:
-            if not conversation_list:
+        def get_conversation_list() -> ConversationPage:
+            conv_list = conversation_list_instance()
+            if not conv_list:
                 return ConversationPage()
-            current_agent_instance = ensure_agent_instance(request.session_hash)
-            conversation_list.set_auth_context(**current_agent_instance.auth_context)
-            return conversation_list.get_conversations()
+            return conv_list.get_conversations()
 
         msg_submitted = msg.submit(
             user_submit,
@@ -526,14 +589,14 @@ def chat_ui(
 
         msg_submitted.then(
             describe_conversation,
-            inputs=[conversation_id, last_user_input, chatbot],
+            inputs=[conversation_id, chatbot],
             outputs=[conversation_description],
             queue=True,
         )
 
         msg_submitted.then(
             assistant_stream,
-            inputs=[traces_state, last_user_input, stop_event],
+            inputs=[conversation_id, traces_state, last_user_input, stop_event],
             outputs=[traces_state],
             show_progress="full",
             show_progress_on=[chatbot],
@@ -543,7 +606,7 @@ def chat_ui(
             outputs=[msg],
         ).then(
             describe_conversation,
-            inputs=[conversation_id, last_user_input, chatbot],
+            inputs=[conversation_id, chatbot],
             outputs=[conversation_description],
             queue=True,
         ).then(
@@ -565,6 +628,7 @@ def chat_ui(
 
         chatbot.clear(
             reset_agent,
+            inputs=[stop_event],
             outputs=[
                 chatbot,
                 traces_state,
@@ -579,21 +643,23 @@ def chat_ui(
         )
 
         def load(request: gr.Request, last_conversation_id: str):
-            current_agent_instance = ensure_agent_instance(request.session_hash)
+            conv_list = conversation_list_instance()
 
             # Determine the conversation id the user wants to use.
             # This can be either a query param (?conversation-id=ABC),
             # or a value from local storage (the last conversation id).
             # The query param takes precedence:
+            conversation_id_to_set = None
             if "conversation-id" in request.query_params and isinstance(
                 request.query_params["conversation-id"], str
             ):
                 if request.query_params["conversation-id"]:
-                    current_agent_instance.set_conversation_id(
-                        request.query_params["conversation-id"]
-                    )
+                    conversation_id_to_set = request.query_params["conversation-id"]
             elif last_conversation_id:
-                current_agent_instance.set_conversation_id(last_conversation_id)
+                conversation_id_to_set = last_conversation_id
+
+            current_agent_instance = ensure_agent_instance(conversation_id_to_set)
+
             return (
                 current_agent_instance.traces,
                 gr.update(
@@ -602,11 +668,7 @@ def chat_ui(
                 gr.update(interactive=True),
                 current_agent_instance.conversation_id,
                 current_agent_instance.conversation_id,
-                (
-                    conversation_list.get_conversations()
-                    if conversation_list
-                    else ConversationPage()
-                ),
+                (conv_list.get_conversations() if conv_list else ConversationPage()),
             )
 
         demo.load(
@@ -632,7 +694,7 @@ def chat_ui(
 def traces_ui(
     traces: Iterable[Trace],
 ):
-    conversation_id, auth_context, messages = chat_messages_from_traces(
+    chat_messages = chat_messages_from_traces(
         traces,
     )
 
@@ -649,18 +711,18 @@ def traces_ui(
         chatbot = gr.Chatbot(
             type="messages",
             height="full",
-            label=f"Conversation {conversation_id}",
-            value=messages,  # type: ignore
+            label=f"Conversation {chat_messages.conversation_id}",
+            value=chat_messages.messages,  # type: ignore
         )
 
         def do_toggle_all_traces(state):
             new_state = not state
             new_label = "Hide internal traces" if new_state else "Show all traces"
-            *_, messages = chat_messages_from_traces(
+            chat_messages_ = chat_messages_from_traces(
                 traces,
                 show_traces="ALL" if new_state else "CORE",
             )
-            return gr.update(value=new_label), new_state, messages
+            return gr.update(value=new_label), new_state, chat_messages_.messages
 
         show_all_traces_toggle_state = gr.State(value=False)
 
