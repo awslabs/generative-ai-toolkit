@@ -1,0 +1,121 @@
+# Copyright 2024 Amazon.com, Inc. and its affiliates. All Rights Reserved.
+#
+# Licensed under the Amazon Software License (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#
+#   http://aws.amazon.com/asl/
+#
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
+
+# Docker Compose configuration for local AgentCore integration development
+#
+# This configuration sets up a local development environment that mirrors
+# the AgentCore deployment architecture with:
+# - Weather Agent container (simulating AgentCore Runtime)
+# - MCP Tools Server container
+# - Proper networking between containers
+# - Environment variable configuration
+# - Health checks and logging
+
+version: "3.8"
+
+services:
+  # MCP Tools Server - provides weather tools via MCP protocol
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: weather-mcp-server
+    ports:
+      - "8000:8000" # Expose MCP server port for debugging
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/health').raise_for_status()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - agentcore-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Weather Agent - simulates AgentCore Runtime environment
+  weather-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: weather-agent
+    ports:
+      - "8080:8080" # AgentCore standard port
+    environment:
+      # Agent Configuration
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - FLASK_APP=app.py
+      - FLASK_DEBUG=false
+      - HOST=0.0.0.0
+      - PORT=8080
+      - LOG_LEVEL=INFO
+
+      # Bedrock Configuration
+      - BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+      - AWS_REGION=us-east-1
+      - MAX_TOKENS=4096
+      - TEMPERATURE=0.1
+
+      # MCP Server Configuration - points to the mcp-server container
+      - MCP_SERVER_ENDPOINT=http://mcp-server:8000/mcp
+
+      # AWS Credentials (will be passed from host environment)
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_PROFILE
+      - AWS_DEFAULT_REGION
+    volumes:
+      # Mount AWS credentials if using file-based credentials
+      - ~/.aws:/home/appuser/.aws:ro
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - agentcore-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  agentcore-network:
+    driver: bridge
+    name: agentcore-local-network
+# Optional: Add volumes for persistent data if needed in the future
+# volumes:
+#   agent-data:
+#   mcp-data:

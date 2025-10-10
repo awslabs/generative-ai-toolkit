@@ -1,0 +1,77 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:GetWorkloadAccessTokenForJWT"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:eu-central-1:060337561279:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:*:060337561279:inference-profile/*amazon.nova-micro-v1:0"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "arn:aws:ecr:eu-central-1:060337561279:repository/cdk-hnb659fds-container-assets-060337561279-eu-central-1"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogStreams",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:eu-central-1:060337561279:log-group:/aws/bedrock-agentcore/runtimes/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "arn:aws:logs:eu-central-1:060337561279:log-group:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets"
+      ],
+      "Resource": "arn:aws:xray:eu-central-1:060337561279:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricData"
+      ],
+      "Resource": "arn:aws:cloudwatch:eu-central-1:060337561279:*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "bedrock-agentcore"
+        }
+      }
+    }
+  ]
+}

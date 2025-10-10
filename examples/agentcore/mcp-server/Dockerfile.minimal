@@ -1,0 +1,40 @@
+# Minimal MCP Server Dockerfile for AgentCore Runtime Testing
+# Use Amazon Linux 2023 as required by AgentCore Runtime
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+# Update system and install Python 3.11 and shadow-utils for user management
+RUN dnf update -y && \
+    dnf install -y python3.11 python3.11-pip shadow-utils && \
+    dnf clean all
+
+# Create application directory
+RUN mkdir -p /opt/amazon
+
+# Set working directory
+WORKDIR /opt/amazon
+
+# Copy minimal requirements and install (empty file, no dependencies)
+COPY minimal_requirements.txt requirements.txt
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip
+
+# Copy minimal server code
+COPY minimal_server.py .
+
+# Create non-root user for security
+RUN groupadd -r mcpuser && useradd -r -g mcpuser mcpuser && \
+    chown -R mcpuser:mcpuser /opt/amazon
+
+USER mcpuser
+
+# Set up runtime environment for AgentCore
+ENV PYTHONPATH=/opt/amazon
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
+ENV HOST=0.0.0.0
+
+# Expose port 8000 (required for MCP protocol)
+EXPOSE 8000
+
+# Simple entrypoint - no OpenTelemetry for now to keep it minimal
+ENTRYPOINT ["python3.11", "minimal_server.py"]

@@ -1,0 +1,27 @@
+{
+  "name": "agentcore-integration-infrastructure",
+  "version": "1.0.0",
+  "description": "CDK infrastructure for AgentCore integration example",
+  "main": "lib/app.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy",
+    "synth": "cdk synth",
+    "diff": "cdk diff"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "aws-cdk": "^2.100.0",
+    "typescript": "~5.0.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.100.0",
+    "constructs": "^10.4.2"
+  },
+  "overrides": {
+    "@types/node": "^20.0.0"
+  }
+}

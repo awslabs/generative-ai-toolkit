@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # ADOT Collector for local development
+  adot-collector:
+    image: public.ecr.aws/aws-observability/aws-otel-collector:latest
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics endpoint
+    volumes:
+      - ./adot-config.yaml:/etc/otelcol-contrib/config.yaml
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    
+  # Your agent container
+  agent:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - AGENT_VERSION=6
+      - AWS_REGION=eu-central-1
+      - OTEL_PYTHON_DISTRO=aws_distro
+      - OTEL_PYTHON_CONFIGURATOR=aws_configurator
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://adot-collector:4318
+      - OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
+      - OTEL_SERVICE_NAME=minimal_agent.local
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=minimal_agent.local,deployment.environment=local
+    depends_on:
+      - adot-collector

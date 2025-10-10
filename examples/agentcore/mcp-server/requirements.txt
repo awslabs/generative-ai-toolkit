@@ -1,0 +1,7 @@
+# MCP server component dependencies
+pydantic>=2.10,<3.0
+mcp>=1.8,<2.0
+starlette>=0.27.0
+uvicorn>=0.20.0
+requests>=2.31.0
+aws-opentelemetry-distro==0.12.1
