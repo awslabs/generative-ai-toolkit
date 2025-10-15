@@ -5,12 +5,10 @@ import { Construct } from "constructs";
 
 export interface IamRolesProps {
   agentRepository: ecr.IRepository;
-  mcpServerRepository: ecr.IRepository;
 }
 
 export class IamRoles extends Construct {
   public readonly agentExecutionRole: iam.Role;
-  public readonly mcpServerExecutionRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: IamRolesProps) {
     super(scope, id);
@@ -23,10 +21,23 @@ export class IamRoles extends Construct {
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           "service-role/AmazonECSTaskExecutionRolePolicy"
         ),
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          "CloudWatchLambdaApplicationSignalsExecutionRolePolicy"
+        ),
       ],
       inlinePolicies: {
         AgentPermissions: new iam.PolicyDocument({
           statements: [
+            // AgentCore workload access token
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ["bedrock-agentcore:GetWorkloadAccessTokenForJWT"],
+              resources: [
+                `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:*`,
+              ],
+            }),
             // Bedrock model access (agent needs to call LLMs)
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
@@ -44,6 +55,7 @@ export class IamRoles extends Construct {
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
+                "logs:DescribeLogStreams",
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:PutLogEvents",
@@ -51,31 +63,63 @@ export class IamRoles extends Construct {
               resources: [
                 `arn:aws:logs:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:log-group:/aws/agentcore/agentcore-integration-agent*`,
+                }:log-group:/aws/bedrock-agentcore/runtimes/*`,
+              ],
+            }),
+            // CloudWatch Logs - describe log groups
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ["logs:DescribeLogGroups"],
+              resources: [
+                `arn:aws:logs:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:log-group:*`,
               ],
             }),
             // X-Ray tracing
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
-              actions: ["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
-              resources: ["*"],
+              actions: [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+              ],
+              resources: [
+                `arn:aws:xray:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:*`,
+              ],
             }),
-            // // ECR access for agent container image
-            // new iam.PolicyStatement({
-            //   effect: iam.Effect.ALLOW,
-            //   actions: [
-            //     "ecr:GetAuthorizationToken",
-            //     "ecr:BatchCheckLayerAvailability",
-            //     "ecr:GetDownloadUrlForLayer",
-            //     "ecr:BatchGetImage",
-            //   ],
-            //   resources: [props.agentRepository.repositoryArn],
-            // }),
+            // CloudWatch Metrics
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ["cloudwatch:PutMetricData"],
+              resources: [
+                `arn:aws:cloudwatch:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:*`,
+              ],
+              conditions: {
+                StringEquals: {
+                  "cloudwatch:namespace": "bedrock-agentcore",
+                },
+              },
+            }),
             // ECR authorization token (account-wide)
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["ecr:GetAuthorizationToken"],
               resources: ["*"],
+            }),
+            // ECR image access
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: [
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+              ],
+              resources: [props.agentRepository.repositoryArn],
             }),
             // AgentCore Runtime invocation for MCP communication
             new iam.PolicyStatement({
@@ -92,69 +136,10 @@ export class IamRoles extends Construct {
       },
     });
 
-    // IAM execution role for MCP Server runtime
-    this.mcpServerExecutionRole = new iam.Role(this, "McpServerExecutionRole", {
-      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
-      description: "Execution role for MCP Server runtime",
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          "service-role/AmazonECSTaskExecutionRolePolicy"
-        ),
-      ],
-      inlinePolicies: {
-        McpServerPermissions: new iam.PolicyDocument({
-          statements: [
-            // CloudWatch Logs (MCP server only needs logging)
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents",
-              ],
-              resources: [
-                `arn:aws:logs:${cdk.Stack.of(this).region}:${
-                  cdk.Stack.of(this).account
-                }:log-group:/aws/agentcore/agentcore-integration-mcp-server*`,
-              ],
-            }),
-            // X-Ray tracing
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: ["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
-              resources: ["*"],
-            }),
-            // ECR access for MCP server container image
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: [
-                "ecr:GetAuthorizationToken",
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:GetDownloadUrlForLayer",
-                "ecr:BatchGetImage",
-              ],
-              resources: [props.mcpServerRepository.repositoryArn],
-            }),
-            // ECR authorization token (account-wide)
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: ["ecr:GetAuthorizationToken"],
-              resources: ["*"],
-            }),
-          ],
-        }),
-      },
-    });
-
-    // Output execution role ARNs
+    // Output execution role ARN
     new cdk.CfnOutput(this, "AgentExecutionRoleArn", {
       value: this.agentExecutionRole.roleArn,
       description: "ARN of the Agent execution role",
-    });
-
-    new cdk.CfnOutput(this, "McpServerExecutionRoleArn", {
-      value: this.mcpServerExecutionRole.roleArn,
-      description: "ARN of the MCP Server execution role",
     });
   }
 }
