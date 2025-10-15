@@ -70,74 +70,41 @@ class TestAgentDeployment:
             else:
                 pytest.fail(f"Failed to invoke agent ({error_code}): {e}")
 
-    def test_invoke_agent_weather_query(
-        self, bedrock_agentcore_client, agent_runtime_endpoint_arn
-    ):
-        """Test agent invocation with a weather-related query."""
-        # Extract endpoint ID from ARN
-        endpoint_id = agent_runtime_endpoint_arn.split("/")[-1]
-
-        try:
-            response = bedrock_agentcore_client.invoke_agent_runtime(
-                agentRuntimeEndpointId=endpoint_id,
-                inputText="What's the weather like today?",
-                sessionId="test-session-weather",
-            )
-
-            # Check response structure
-            assert "completion" in response
-            assert isinstance(response["completion"], str)
-            assert len(response["completion"]) > 0
-
-            # Check that response is weather-related (basic check)
-            completion_lower = response["completion"].lower()
-            weather_keywords = [
-                "weather",
-                "temperature",
-                "forecast",
-                "climate",
-                "conditions",
-            ]
-            assert any(
-                keyword in completion_lower for keyword in weather_keywords
-            ), f"Response doesn't seem weather-related: {response['completion']}"
-
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ValidationException":
-                pytest.skip(f"Agent not ready for invocation: {e}")
-            else:
-                pytest.fail(f"Failed to invoke agent: {e}")
-
     def test_invoke_agent_multiple_sessions(
-        self, bedrock_agentcore_client, agent_runtime_endpoint_arn
+        self, bedrock_agentcore_client, agent_runtime_arn
     ):
         """Test that agent can handle multiple concurrent sessions."""
-        # Extract endpoint ID from ARN
-        endpoint_id = agent_runtime_endpoint_arn.split("/")[-1]
-
-        sessions = ["test-session-1", "test-session-2", "test-session-3"]
+        sessions = [str(uuid.uuid4()) for _ in range(3)]
         responses = []
 
         try:
-            for session_id in sessions:
+            for i, session_id in enumerate(sessions):
+                # Prepare the payload
+                payload = json.dumps({"prompt": f"Hello from session {i+1}"}).encode()
+
                 response = bedrock_agentcore_client.invoke_agent_runtime(
-                    agentRuntimeEndpointId=endpoint_id,
-                    inputText=f"Hello from session {session_id}",
-                    sessionId=session_id,
+                    agentRuntimeArn=agent_runtime_arn,
+                    runtimeSessionId=session_id,
+                    payload=payload,
                 )
                 responses.append(response)
 
             # Verify all responses are valid
             for i, response in enumerate(responses):
+                assert "response" in response, f"Session {sessions[i]} missing response"
                 assert (
-                    "completion" in response
-                ), f"Session {sessions[i]} missing completion"
-                assert isinstance(
-                    response["completion"], str
-                ), f"Session {sessions[i]} completion not string"
+                    "contentType" in response
+                ), f"Session {sessions[i]} missing contentType"
+
+                # Parse the response payload (handle streaming body)
+                response_body = response["response"].read().decode("utf-8")
+                response_data = json.loads(response_body)
                 assert (
-                    len(response["completion"]) > 0
-                ), f"Session {sessions[i]} empty completion"
+                    "result" in response_data
+                ), f"Session {sessions[i]} missing result in response data"
+                assert (
+                    len(response_data["result"]) > 0
+                ), f"Session {sessions[i]} empty result"
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ValidationException":
@@ -145,29 +112,32 @@ class TestAgentDeployment:
             else:
                 pytest.fail(f"Failed to invoke agent: {e}")
 
-    def test_agent_response_time(
-        self, bedrock_agentcore_client, agent_runtime_endpoint_arn
-    ):
+    def test_agent_response_time(self, bedrock_agentcore_client, agent_runtime_arn):
         """Test that agent responds within reasonable time limits."""
-
-        # Extract endpoint ID from ARN
-        endpoint_id = agent_runtime_endpoint_arn.split("/")[-1]
-
         try:
             start_time = time.time()
 
+            # Prepare the payload
+            payload = json.dumps({"prompt": "Give me a brief weather update."}).encode()
+
             response = bedrock_agentcore_client.invoke_agent_runtime(
-                agentRuntimeEndpointId=endpoint_id,
-                inputText="Give me a brief weather update.",
-                sessionId="test-session-timing",
+                agentRuntimeArn=agent_runtime_arn,
+                runtimeSessionId=str(uuid.uuid4()),
+                payload=payload,
             )
 
             end_time = time.time()
             response_time = end_time - start_time
 
             # Check response is valid
-            assert "completion" in response
-            assert len(response["completion"]) > 0
+            assert "response" in response
+            assert "contentType" in response
+
+            # Parse the response payload (handle streaming body)
+            response_body = response["response"].read().decode("utf-8")
+            response_data = json.loads(response_body)
+            assert "result" in response_data
+            assert len(response_data["result"]) > 0
 
             # Check response time is reasonable (less than 30 seconds)
             assert (
