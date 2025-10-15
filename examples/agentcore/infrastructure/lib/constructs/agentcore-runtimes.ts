@@ -34,6 +34,8 @@ export class AgentCoreRuntimes extends Construct {
       protocolConfiguration: "HTTP",
       environmentVariables: {
         AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+        AWS_REGION: cdk.Stack.of(this).region,
+        BEDROCK_MODEL_ID: "eu.anthropic.claude-sonnet-4-20250514-v1:0",
       },
     });
 

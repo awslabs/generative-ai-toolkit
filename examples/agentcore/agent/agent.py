@@ -3,7 +3,7 @@
 
 import logging
 import os
-import time
+import sys
 
 import boto3
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -14,7 +14,36 @@ from generative_ai_toolkit.agent import BedrockConverseAgent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logger.info("Agent starting - logger configured with enhanced observability")
+logger.info("Agent starting - logger configured")
+
+
+def validate_environment_variables():
+    """Validate required environment variables are present."""
+    required_vars = {
+        "AWS_REGION": "AWS region for Bedrock service",
+        "BEDROCK_MODEL_ID": "Bedrock model identifier",
+    }
+
+    missing_vars = []
+    for var, description in required_vars.items():
+        if not os.environ.get(var):
+            missing_vars.append(f"{var} ({description})")
+
+    if missing_vars:
+        logger.error("Missing required environment variables:")
+        for var in missing_vars:
+            logger.error(f"  - {var}")
+        logger.error("Please set these environment variables before running the agent.")
+        sys.exit(1)
+
+    # Log key configuration
+    logger.info("Key agent configuration:")
+    logger.info(f"  AWS_REGION: {os.environ.get('AWS_REGION')}")
+    logger.info(f"  BEDROCK_MODEL_ID: {os.environ.get('BEDROCK_MODEL_ID')}")
+
+
+# Validate environment on startup
+validate_environment_variables()
 
 app = BedrockAgentCoreApp()
 
@@ -22,8 +51,6 @@ app = BedrockAgentCoreApp()
 @app.entrypoint
 def invoke(payload: dict[str, object]) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
-    start_time = time.time()
-
     logger.info(f"Received invocation: {payload}")
 
     # Extract session ID for correlation (AgentCore observability best practice)
@@ -43,13 +70,15 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
 
     try:
         # Create Generative AI Toolkit agent
-        region_name = os.environ.get("AWS_REGION", "us-east-1")
+        region_name = os.environ["AWS_REGION"]  # Required env var, validated at startup
+        model_id = os.environ[
+            "BEDROCK_MODEL_ID"
+        ]  # Required env var, validated at startup
+
         session = boto3.Session(region_name=region_name)
 
         agent = BedrockConverseAgent(
-            model_id=os.environ.get(
-                "BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0"
-            ),
+            model_id=model_id,
             session=session,
             system_prompt="You are a helpful weather assistant. Provide accurate weather information when asked.",
         )
@@ -58,20 +87,40 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
         logger.info("Calling Bedrock Converse API")
         response = agent.converse(user_message)
 
-        processing_time = time.time() - start_time
-        logger.info(
-            f"Sending response (processed in {processing_time:.2f}s): {response[:100]}..."
-        )
+        logger.info(f"Sending response: {response[:100]}...")
 
         return {"result": response}
 
     except Exception as e:
-        processing_time = time.time() - start_time
-        logger.error(
-            f"Error processing invocation after {processing_time:.2f}s: {e}",
-            exc_info=True,
-        )
-        return {"result": f"Error: {str(e)}"}
+        # Enhanced error handling for common Bedrock issues
+        error_msg = str(e)
+        if "ValidationException" in error_msg:
+            if "model identifier is invalid" in error_msg:
+                logger.error(
+                    f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' is not available in region '{os.environ.get('AWS_REGION')}'"
+                )
+                logger.error(
+                    "Please check available models with: aws bedrock list-foundation-models --region <your-region>"
+                )
+                return {
+                    "result": f"Model configuration error: {os.environ.get('BEDROCK_MODEL_ID')} is not available in {os.environ.get('AWS_REGION')}"
+                }
+            elif "on-demand throughput isn't supported" in error_msg:
+                logger.error(
+                    f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' requires an inference profile for access"
+                )
+                logger.error(
+                    "Please check available inference profiles with: aws bedrock list-inference-profiles --region <your-region>"
+                )
+                logger.error(
+                    "Use an inference profile ID instead of the direct model ID"
+                )
+                return {
+                    "result": f"Model access error: {os.environ.get('BEDROCK_MODEL_ID')} requires an inference profile. Use an inference profile ID instead."
+                }
+
+        logger.error(f"Error processing invocation: {e}", exc_info=True)
+        return {"result": f"Error: {error_msg}"}
 
 
 if __name__ == "__main__":

@@ -46,9 +46,12 @@ export class IamRoles extends Construct {
                 "bedrock:InvokeModelWithResponseStream",
               ],
               resources: [
-                `arn:aws:bedrock:${
-                  cdk.Stack.of(this).region
-                }::foundation-model/*`,
+                // Foundation models - allow all regions for inference profile routing
+                "arn:aws:bedrock:*::foundation-model/*",
+                // Inference profiles - current region and account
+                `arn:aws:bedrock:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:inference-profile/*`,
               ],
             }),
             // CloudWatch Logs
@@ -115,10 +118,7 @@ export class IamRoles extends Construct {
             // ECR image access
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
-              actions: [
-                "ecr:BatchGetImage",
-                "ecr:GetDownloadUrlForLayer",
-              ],
+              actions: ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
               resources: [props.agentRepository.repositoryArn],
             }),
             // AgentCore Runtime invocation for MCP communication
