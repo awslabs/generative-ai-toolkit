@@ -27,7 +27,9 @@ class TestMcpServerHealth:
             ], f"Runtime status is {status}"
 
             # Check runtime configuration
-            assert response.get("protocolConfiguration") == "MCP"
+            assert (
+                response.get("protocolConfiguration", {}).get("serverProtocol") == "MCP"
+            )
             assert response.get("agentRuntimeName") == "agentcore_mcp_server"
 
         except ClientError as e:
@@ -84,11 +86,15 @@ class TestMcpServerHealth:
                 assert log_groups[0]["logGroupName"] == log_group_name
             else:
                 # Log group may not exist yet if runtime hasn't been invoked
-                pytest.skip("Log group not yet created (runtime may not have been invoked)")
+                pytest.skip(
+                    "Log group not yet created (runtime may not have been invoked)"
+                )
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceNotFoundException":
-                pytest.skip("Log group not yet created (runtime may not have been invoked)")
+                pytest.skip(
+                    "Log group not yet created (runtime may not have been invoked)"
+                )
             else:
                 pytest.fail(f"Failed to check MCP server logs: {e}")
 
@@ -121,7 +127,12 @@ class TestMcpServerHealth:
             assert isinstance(datapoints, list)
 
         except ClientError as e:
-            if e.response["Error"]["Code"] in ["InvalidParameterValue", "ResourceNotFound"]:
-                pytest.skip("Metrics not yet available (runtime may not have been invoked)")
+            if e.response["Error"]["Code"] in [
+                "InvalidParameterValue",
+                "ResourceNotFound",
+            ]:
+                pytest.skip(
+                    "Metrics not yet available (runtime may not have been invoked)"
+                )
             else:
                 pytest.fail(f"Failed to check MCP server metrics: {e}")

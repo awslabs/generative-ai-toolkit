@@ -8,9 +8,11 @@
     "watch": "tsc -w",
     "cdk": "cdk",
     "deploy": "cdk deploy",
+    "deploy-with-outputs": "cdk deploy --outputs-file cdk-outputs.json",
     "destroy": "cdk destroy",
     "synth": "cdk synth",
-    "diff": "cdk diff"
+    "diff": "cdk diff",
+    "check-stack-name": "node check-stack-name.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

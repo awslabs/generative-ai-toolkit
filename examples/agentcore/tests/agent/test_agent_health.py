@@ -24,9 +24,9 @@ class TestAgentHealth:
             )
 
             # Check runtime is active
-            assert (
-                response["status"] == "READY"
-            ), f"Runtime status is {response['status']}, expected READY"
+            assert response["status"] == "READY", (
+                f"Runtime status is {response['status']}, expected READY"
+            )
 
             # Check basic runtime properties
             assert "agentRuntimeName" in response
@@ -52,9 +52,9 @@ class TestAgentHealth:
             )
 
             # Check endpoint is active
-            assert (
-                response["status"] == "READY"
-            ), f"Endpoint status is {response['status']}, expected READY"
+            assert response["status"] == "READY", (
+                f"Endpoint status is {response['status']}, expected READY"
+            )
 
             # Check basic endpoint properties
             assert "name" in response
@@ -168,9 +168,9 @@ class TestAgentHealth:
 
             # Sessions should be able to provide different responses (basic isolation check)
             # Note: Responses might be similar since both are weather-related, but sessions should work independently
-            assert (
-                len(session1_response) > 0 and len(session2_response) > 0
-            ), "Both sessions should provide valid responses"
+            assert len(session1_response) > 0 and len(session2_response) > 0, (
+                "Both sessions should provide valid responses"
+            )
 
             # Validate that both sessions respond as weather agents
             weather_keywords = [
@@ -241,12 +241,12 @@ class TestAgentHealth:
                 # Parse the response payload
                 response_body = response["response"].read().decode("utf-8")
                 response_data = json.loads(response_body)
-                assert (
-                    "result" in response_data
-                ), f"Response {i} missing result in response data"
-                assert (
-                    len(response_data["result"]) > 0
-                ), f"Response {i} has empty result"
+                assert "result" in response_data, (
+                    f"Response {i} missing result in response data"
+                )
+                assert len(response_data["result"]) > 0, (
+                    f"Response {i} has empty result"
+                )
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ValidationException":

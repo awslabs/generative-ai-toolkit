@@ -1,4 +1,0 @@
-# Test dependencies for AgentCore agent tests
-pytest>=8.4.0
-boto3>=1.37.0
-botocore>=1.37.0

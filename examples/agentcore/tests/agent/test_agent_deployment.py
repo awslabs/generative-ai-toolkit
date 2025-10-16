@@ -80,7 +80,7 @@ class TestAgentDeployment:
         try:
             for i, session_id in enumerate(sessions):
                 # Prepare the payload
-                payload = json.dumps({"prompt": f"Hello from session {i+1}"}).encode()
+                payload = json.dumps({"prompt": f"Hello from session {i + 1}"}).encode()
 
                 response = bedrock_agentcore_client.invoke_agent_runtime(
                     agentRuntimeArn=agent_runtime_arn,
@@ -92,19 +92,19 @@ class TestAgentDeployment:
             # Verify all responses are valid
             for i, response in enumerate(responses):
                 assert "response" in response, f"Session {sessions[i]} missing response"
-                assert (
-                    "contentType" in response
-                ), f"Session {sessions[i]} missing contentType"
+                assert "contentType" in response, (
+                    f"Session {sessions[i]} missing contentType"
+                )
 
                 # Parse the response payload (handle streaming body)
                 response_body = response["response"].read().decode("utf-8")
                 response_data = json.loads(response_body)
-                assert (
-                    "result" in response_data
-                ), f"Session {sessions[i]} missing result in response data"
-                assert (
-                    len(response_data["result"]) > 0
-                ), f"Session {sessions[i]} empty result"
+                assert "result" in response_data, (
+                    f"Session {sessions[i]} missing result in response data"
+                )
+                assert len(response_data["result"]) > 0, (
+                    f"Session {sessions[i]} empty result"
+                )
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ValidationException":
@@ -140,9 +140,9 @@ class TestAgentDeployment:
             assert len(response_data["result"]) > 0
 
             # Check response time is reasonable (less than 30 seconds)
-            assert (
-                response_time < 30.0
-            ), f"Response took too long: {response_time:.2f} seconds"
+            assert response_time < 30.0, (
+                f"Response took too long: {response_time:.2f} seconds"
+            )
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "ValidationException":

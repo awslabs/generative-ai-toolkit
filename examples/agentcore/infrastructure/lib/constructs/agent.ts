@@ -6,14 +6,23 @@ import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
 
+export interface AgentProps {
+  /**
+   * The name prefix for Agent resources
+   */
+  readonly namePrefix?: string;
+}
+
 export class Agent extends Construct {
   public readonly runtime: bedrockagentcore.CfnRuntime;
   public readonly runtimeEndpoint: bedrockagentcore.CfnRuntimeEndpoint;
   public readonly executionRole: iam.Role;
   public readonly imageAsset: DockerImageAsset;
 
-  constructor(scope: Construct, id: string) {
+  constructor(scope: Construct, id: string, props?: AgentProps) {
     super(scope, id);
+
+    const namePrefix = props?.namePrefix || cdk.Stack.of(this).stackName;
 
     // Build agent container
     this.imageAsset = new DockerImageAsset(this, "ImageAsset", {
@@ -137,7 +146,7 @@ export class Agent extends Construct {
 
     // Agent Runtime
     this.runtime = new bedrockagentcore.CfnRuntime(this, "Runtime", {
-      agentRuntimeName: "agentcore_agent",
+      agentRuntimeName: `${namePrefix}_agent`.replace(/-/g, "_"),
       description: "AgentCore runtime for the agent (HTTP protocol)",
       roleArn: this.executionRole.roleArn,
       agentRuntimeArtifact: {
@@ -161,7 +170,7 @@ export class Agent extends Construct {
       this,
       "RuntimeEndpoint",
       {
-        name: "agentcore_agent_endpoint",
+        name: `${namePrefix}_agent_endpoint`.replace(/-/g, "_"),
         description: "Runtime endpoint for the agent",
         agentRuntimeId: this.runtime.attrAgentRuntimeId,
       }
