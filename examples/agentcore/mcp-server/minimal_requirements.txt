@@ -1,2 +1,0 @@
-# Minimal requirements for testing container startup
-# No external dependencies needed for the minimal server

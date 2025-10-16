@@ -1,20 +1,30 @@
 import * as cdk from "aws-cdk-lib";
+import * as bedrockagentcore from "aws-cdk-lib/aws-bedrockagentcore";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as ecr from "aws-cdk-lib/aws-ecr";
+import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
+import * as path from "path";
 
-export interface IamRolesProps {
-  agentRepository: ecr.IRepository;
-}
+export class Agent extends Construct {
+  public readonly runtime: bedrockagentcore.CfnRuntime;
+  public readonly runtimeEndpoint: bedrockagentcore.CfnRuntimeEndpoint;
+  public readonly executionRole: iam.Role;
+  public readonly imageAsset: DockerImageAsset;
 
-export class IamRoles extends Construct {
-  public readonly agentExecutionRole: iam.Role;
-
-  constructor(scope: Construct, id: string, props: IamRolesProps) {
+  constructor(scope: Construct, id: string) {
     super(scope, id);
 
-    // IAM execution role for Agent runtime
-    this.agentExecutionRole = new iam.Role(this, "AgentExecutionRole", {
+    // Build agent container
+    this.imageAsset = new DockerImageAsset(this, "ImageAsset", {
+      directory: path.join(__dirname, "../../../agent"),
+      displayName: "AgentCore Agent",
+      assetName: "agentcore-agent",
+      platform: Platform.LINUX_ARM64,
+    });
+
+    // IAM execution role
+    this.executionRole = new iam.Role(this, "ExecutionRole", {
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
       description: "Execution role for Agent runtime",
       managedPolicies: [
@@ -28,7 +38,6 @@ export class IamRoles extends Construct {
       inlinePolicies: {
         AgentPermissions: new iam.PolicyDocument({
           statements: [
-            // AgentCore workload access token
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["bedrock-agentcore:GetWorkloadAccessTokenForJWT"],
@@ -38,7 +47,6 @@ export class IamRoles extends Construct {
                 }:*`,
               ],
             }),
-            // Bedrock model access (agent needs to call LLMs)
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
@@ -46,15 +54,12 @@ export class IamRoles extends Construct {
                 "bedrock:InvokeModelWithResponseStream",
               ],
               resources: [
-                // Foundation models - allow all regions for inference profile routing
                 "arn:aws:bedrock:*::foundation-model/*",
-                // Inference profiles - current region and account
                 `arn:aws:bedrock:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
                 }:inference-profile/*`,
               ],
             }),
-            // CloudWatch Logs
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
@@ -69,7 +74,6 @@ export class IamRoles extends Construct {
                 }:log-group:/aws/bedrock-agentcore/runtimes/*`,
               ],
             }),
-            // CloudWatch Logs - describe log groups
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["logs:DescribeLogGroups"],
@@ -79,7 +83,6 @@ export class IamRoles extends Construct {
                 }:log-group:*`,
               ],
             }),
-            // X-Ray tracing
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
@@ -94,7 +97,6 @@ export class IamRoles extends Construct {
                 }:*`,
               ],
             }),
-            // CloudWatch Metrics
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["cloudwatch:PutMetricData"],
@@ -109,19 +111,16 @@ export class IamRoles extends Construct {
                 },
               },
             }),
-            // ECR authorization token (account-wide)
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["ecr:GetAuthorizationToken"],
               resources: ["*"],
             }),
-            // ECR image access
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-              resources: [props.agentRepository.repositoryArn],
+              resources: [this.imageAsset.repository.repositoryArn],
             }),
-            // AgentCore Runtime invocation for MCP communication
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["bedrock-agentcore:InvokeAgentRuntime"],
@@ -136,10 +135,52 @@ export class IamRoles extends Construct {
       },
     });
 
-    // Output execution role ARN
-    new cdk.CfnOutput(this, "AgentExecutionRoleArn", {
-      value: this.agentExecutionRole.roleArn,
-      description: "ARN of the Agent execution role",
+    // Agent Runtime
+    this.runtime = new bedrockagentcore.CfnRuntime(this, "Runtime", {
+      agentRuntimeName: "agentcore_agent",
+      description: "AgentCore runtime for the agent (HTTP protocol)",
+      roleArn: this.executionRole.roleArn,
+      agentRuntimeArtifact: {
+        containerConfiguration: {
+          containerUri: this.imageAsset.imageUri,
+        },
+      },
+      networkConfiguration: {
+        networkMode: "PUBLIC",
+      },
+      protocolConfiguration: "HTTP",
+      environmentVariables: {
+        AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+        AWS_REGION: cdk.Stack.of(this).region,
+        BEDROCK_MODEL_ID: "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+      },
+    });
+
+    // Agent Runtime Endpoint
+    this.runtimeEndpoint = new bedrockagentcore.CfnRuntimeEndpoint(
+      this,
+      "RuntimeEndpoint",
+      {
+        name: "agentcore_agent_endpoint",
+        description: "Runtime endpoint for the agent",
+        agentRuntimeId: this.runtime.attrAgentRuntimeId,
+      }
+    );
+
+    // Outputs
+    new cdk.CfnOutput(this, "RuntimeArn", {
+      value: this.runtime.attrAgentRuntimeArn,
+      description: "ARN of the Agent runtime",
+    });
+
+    new cdk.CfnOutput(this, "RuntimeEndpointArn", {
+      value: this.runtimeEndpoint.attrAgentRuntimeEndpointArn,
+      description: "ARN of the Agent runtime endpoint",
+    });
+
+    new cdk.CfnOutput(this, "ImageUri", {
+      value: this.imageAsset.imageUri,
+      description: "URI of the built agent container image",
     });
   }
 }

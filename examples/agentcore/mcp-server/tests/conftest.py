@@ -1,4 +1,4 @@
-"""Pytest configuration for AgentCore agent tests."""
+"""Pytest configuration for AgentCore MCP server tests."""
 
 from typing import Any
 
@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture(scope="session")
 def cdk_outputs() -> dict[str, Any]:
-    """Get CDK stack outputs for testing deployed agent."""
+    """Get CDK stack outputs for testing deployed MCP server."""
     stack_name = "AgentCoreStack"
 
     try:
@@ -38,25 +38,25 @@ def bedrock_agentcore_control_client():
 
 @pytest.fixture(scope="session")
 def bedrock_agentcore_client():
-    """Create Bedrock AgentCore client for testing agent invocation."""
+    """Create Bedrock AgentCore client for testing MCP server invocation."""
     return boto3.client("bedrock-agentcore")
 
 
 @pytest.fixture(scope="session")
-def agent_runtime_arn(cdk_outputs) -> str:
-    """Get agent runtime ARN from CDK outputs."""
-    # Look for the output key that contains "AgentRuntimeArn"
+def mcp_server_runtime_arn(cdk_outputs) -> str:
+    """Get MCP server runtime ARN from CDK outputs."""
+    # Look for the output key that contains "McpServerRuntimeArn"
     for key, value in cdk_outputs.items():
-        if "AgentRuntimeArn" in key:
+        if "McpServerRuntimeArn" in key:
             return value
-    pytest.skip("AgentRuntimeArn not found in CDK outputs")
+    pytest.skip("McpServerRuntimeArn not found in CDK outputs")
 
 
 @pytest.fixture(scope="session")
-def agent_runtime_endpoint_arn(cdk_outputs) -> str:
-    """Get agent runtime endpoint ARN from CDK outputs."""
-    # Look for the output key that contains "AgentRuntimeEndpointArn"
+def mcp_server_runtime_endpoint_arn(cdk_outputs) -> str:
+    """Get MCP server runtime endpoint ARN from CDK outputs."""
+    # Look for the output key that contains "McpServerRuntimeEndpointArn"
     for key, value in cdk_outputs.items():
-        if "AgentRuntimeEndpointArn" in key:
+        if "McpServerRuntimeEndpointArn" in key:
             return value
-    pytest.skip("AgentRuntimeEndpointArn not found in CDK outputs")
+    pytest.skip("McpServerRuntimeEndpointArn not found in CDK outputs")
