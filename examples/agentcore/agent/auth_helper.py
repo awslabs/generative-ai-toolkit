@@ -294,7 +294,7 @@ class McpAuthHelper:
         if self._current_token and self._current_token.access_token == bearer_token:
             # Check expiration if we have the information
             if self._current_token.expires_at:
-                return datetime.utcnow() < self._current_token.expires_at
+                return datetime.now(UTC) < self._current_token.expires_at
             return True
 
         return True  # Basic format is valid, but we can't verify expiration
@@ -309,7 +309,7 @@ class McpAuthHelper:
         if not self._current_token or not self._current_token.expires_at:
             return True
 
-        return datetime.utcnow() >= self._current_token.expires_at
+        return datetime.now(UTC) >= self._current_token.expires_at
 
     def get_current_token(self) -> TokenResponse | None:
         """

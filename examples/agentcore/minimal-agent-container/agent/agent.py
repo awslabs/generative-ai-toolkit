@@ -4,7 +4,9 @@
 import logging
 import os
 
+import boto3
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+
 from generative_ai_toolkit.agent import BedrockConverseAgent
 
 # Configure logging
@@ -38,7 +40,6 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
     logger.info(f"Selected region: {region_name}")
 
     # Create Generative AI Toolkit agent with detected region
-    import boto3
     session = boto3.Session(region_name=region_name)
     agent = BedrockConverseAgent(
         model_id="eu.amazon.nova-micro-v1:0",

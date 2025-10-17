@@ -99,9 +99,9 @@ class TestMcpAuthHelperIntegration:
         # Verify token is stored
         current_token = helper.get_current_token()
         assert current_token is not None, "Current token should be stored"
-        assert (
-            current_token.access_token == token
-        ), "Stored token should match returned token"
+        assert current_token.access_token == token, (
+            "Stored token should match returned token"
+        )
 
     def test_create_authenticated_headers(self):
         """Test creation of authenticated headers."""
@@ -132,9 +132,9 @@ class TestMcpAuthHelperIntegration:
 
         # Get refresh token
         current_token = helper.get_current_token()
-        assert (
-            current_token is not None
-        ), "Should have current token after authentication"
+        assert current_token is not None, (
+            "Should have current token after authentication"
+        )
         assert current_token.refresh_token, "Should have refresh token"
 
         # Test refresh
@@ -146,9 +146,9 @@ class TestMcpAuthHelperIntegration:
         # Verify refreshed token
         assert refreshed_token is not None, "Refreshed token should not be None"
         assert isinstance(refreshed_token, str), "Refreshed token should be a string"
-        assert (
-            refreshed_token != initial_token
-        ), "Refreshed token should be different from initial"
+        assert refreshed_token != initial_token, (
+            "Refreshed token should be different from initial"
+        )
 
     def test_token_response_creation(self):
         """Test TokenResponse creation and expiration calculation."""

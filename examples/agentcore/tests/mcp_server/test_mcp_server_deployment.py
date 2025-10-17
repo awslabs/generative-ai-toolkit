@@ -107,23 +107,23 @@ class TestMcpServerDeployment:
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         # Initialize the MCP session - this is where auth errors typically occur
-                        await session.initialize()
+                        await asyncio.wait_for(session.initialize(), timeout=10.0)
 
                         # List available tools - similar to tools = mcp_client.list_tools_sync()
                         tools_result = await session.list_tools()
 
                         # Verify we got tools back (like the research project checks len(tools))
-                        assert hasattr(
-                            tools_result, "tools"
-                        ), "Expected tools in response"
+                        assert hasattr(tools_result, "tools"), (
+                            "Expected tools in response"
+                        )
                         assert len(tools_result.tools) > 0, "Expected at least one tool"
 
                         # Check for expected weather tools
                         tool_names = [tool.name for tool in tools_result.tools]
                         assert "get_weather" in tool_names, "Expected get_weather tool"
-                        assert (
-                            "get_forecast" in tool_names
-                        ), "Expected get_forecast tool"
+                        assert "get_forecast" in tool_names, (
+                            "Expected get_forecast tool"
+                        )
 
                         print(
                             f"✅ Successfully connected to MCP server and found {len(tools_result.tools)} tools"
@@ -238,7 +238,7 @@ class TestMcpServerDeployment:
                     _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
+                        await asyncio.wait_for(session.initialize(), timeout=10.0)
 
                         # Call the weather tool - similar to how the research project
                         # calls tools through the agent
@@ -247,20 +247,20 @@ class TestMcpServerDeployment:
                         )
 
                         # Verify the result
-                        assert hasattr(
-                            result, "content"
-                        ), "Expected content in tool result"
+                        assert hasattr(result, "content"), (
+                            "Expected content in tool result"
+                        )
                         assert len(result.content) > 0, "Expected tool result content"
 
                         # Check that Amsterdam is mentioned in the response
                         content_text = (
                             str(result.content[0].text) if result.content else ""
                         )
-                        assert (
-                            "Amsterdam" in content_text
-                        ), f"Expected Amsterdam in response: {content_text}"
+                        assert "Amsterdam" in content_text, (
+                            f"Expected Amsterdam in response: {content_text}"
+                        )
 
-                        print(f"✅ Successfully called get_weather tool for Amsterdam")
+                        print("✅ Successfully called get_weather tool for Amsterdam")
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -298,7 +298,7 @@ class TestMcpServerDeployment:
                     _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
+                        await asyncio.wait_for(session.initialize(), timeout=10.0)
 
                         # Call the forecast tool
                         result = await session.call_tool(
@@ -306,21 +306,21 @@ class TestMcpServerDeployment:
                         )
 
                         # Verify the result
-                        assert hasattr(
-                            result, "content"
-                        ), "Expected content in tool result"
+                        assert hasattr(result, "content"), (
+                            "Expected content in tool result"
+                        )
                         assert len(result.content) > 0, "Expected tool result content"
 
                         # Check that Berlin and 5-day are mentioned
                         content_text = (
                             str(result.content[0].text) if result.content else ""
                         )
-                        assert (
-                            "Berlin" in content_text
-                        ), f"Expected Berlin in response: {content_text}"
-                        assert (
-                            "5" in content_text
-                        ), f"Expected 5-day forecast in response: {content_text}"
+                        assert "Berlin" in content_text, (
+                            f"Expected Berlin in response: {content_text}"
+                        )
+                        assert "5" in content_text, (
+                            f"Expected 5-day forecast in response: {content_text}"
+                        )
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -358,7 +358,7 @@ class TestMcpServerDeployment:
                     _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
+                        await asyncio.wait_for(session.initialize(), timeout=10.0)
 
                         # List tools to test response time
                         tools_result = await session.list_tools()
@@ -367,14 +367,14 @@ class TestMcpServerDeployment:
                         response_time = end_time - start_time
 
                         # Verify response time is reasonable (less than 10 seconds)
-                        assert (
-                            response_time < 10.0
-                        ), f"Response took too long: {response_time:.2f} seconds"
+                        assert response_time < 10.0, (
+                            f"Response took too long: {response_time:.2f} seconds"
+                        )
 
                         # Verify we got a valid response
-                        assert hasattr(
-                            tools_result, "tools"
-                        ), "Expected tools in response"
+                        assert hasattr(tools_result, "tools"), (
+                            "Expected tools in response"
+                        )
 
             except Exception as e:
                 error_msg = str(e).lower()
@@ -409,7 +409,7 @@ class TestMcpServerDeployment:
                     _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
+                        await asyncio.wait_for(session.initialize(), timeout=10.0)
 
                         # Try to call a non-existent tool - this should raise an error
                         try:
@@ -423,7 +423,9 @@ class TestMcpServerDeployment:
                             assert (
                                 "not found" in str(tool_error).lower()
                                 or "invalid" in str(tool_error).lower()
-                            ), f"Expected 'not found' or 'invalid' in error message: {tool_error}"
+                            ), (
+                                f"Expected 'not found' or 'invalid' in error message: {tool_error}"
+                            )
 
             except Exception as e:
                 error_msg = str(e).lower()

@@ -1,5 +1,7 @@
 """Unified pytest configuration for AgentCore tests."""
 
+import os
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -8,8 +10,6 @@ import pytest
 
 def get_cdk_stack_name() -> str:
     """Get CDK stack name from .env file, similar to config_loader.py."""
-    import os
-    from pathlib import Path
 
     # First try environment variable
     if stack_name := os.getenv("CDK_STACK_NAME"):

@@ -1,5 +1,6 @@
-import boto3
 import json
+
+import boto3
 
 # Get the latest agent runtime starting with "minimal_agent"
 client = boto3.client("bedrock-agentcore", region_name="eu-central-1")

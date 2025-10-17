@@ -9,7 +9,7 @@ import atexit
 import logging
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from agent.auth_helper import (
     AuthenticationError,
@@ -174,7 +174,7 @@ class TokenManager:
 
         # Check if token expires within the buffer time
         refresh_time = token.expires_at - timedelta(seconds=self.refresh_buffer_seconds)
-        return datetime.utcnow() >= refresh_time
+        return datetime.now(UTC) >= refresh_time
 
     def _start_auto_refresh(self) -> None:
         """Start automatic token refresh in background thread."""
@@ -256,7 +256,7 @@ class TokenManager:
                 else None
             ),
             "expires_in_seconds": (
-                int((current_token.expires_at - datetime.utcnow()).total_seconds())
+                int((current_token.expires_at - datetime.now(UTC)).total_seconds())
                 if current_token.expires_at
                 else None
             ),

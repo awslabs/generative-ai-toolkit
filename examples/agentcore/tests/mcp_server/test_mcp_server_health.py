@@ -1,5 +1,8 @@
 """Health check tests for AgentCore MCP server."""
 
+from datetime import datetime, timedelta
+
+import boto3
 import pytest
 from botocore.exceptions import ClientError
 
@@ -66,7 +69,6 @@ class TestMcpServerHealth:
         self, bedrock_agentcore_control_client, mcp_server_runtime_arn
     ):
         """Test that MCP server runtime has associated CloudWatch logs."""
-        import boto3
 
         runtime_id = mcp_server_runtime_arn.split("/")[-1]
         logs_client = boto3.client("logs")
@@ -100,8 +102,6 @@ class TestMcpServerHealth:
 
     def test_mcp_server_runtime_metrics_available(self, mcp_server_runtime_arn):
         """Test that CloudWatch metrics are available for the MCP server runtime."""
-        import boto3
-        from datetime import datetime, timedelta
 
         runtime_id = mcp_server_runtime_arn.split("/")[-1]
         cloudwatch = boto3.client("cloudwatch")
