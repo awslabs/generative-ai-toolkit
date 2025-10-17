@@ -48,7 +48,6 @@ class Tool(Protocol):
         ...
 
 
-
 class BedrockConverseTool(Tool):
 
     def __init__(
@@ -142,15 +141,41 @@ class BedrockConverseTool(Tool):
         ]
 
     def _parse_parameter_docstring(self) -> dict[str, str]:
-        param_descriptions = {}
-        param_pattern = re.compile(r"^\s*(\w+)\s*:\s*.*\n\s*(.+)$", re.MULTILINE)
-        matches = param_pattern.findall(self.parameter_description)
+        """
+        Parse a NumPy-style Parameters section into {param_name: multi-line description}.
+        - Allows blank lines inside descriptions.
+        - Stops before the next param with the same indent or section end.
+        - Handles final lines without a trailing newline.
+        """
+        param_pattern = re.compile(
+            r"^"  # start of a param line
+            r"(?P<indent>[ \t]*)"  # indent of the param line
+            r"(?P<name>\w+)\s*:\s*.*\r?\n"  # 'name : type...' then newline
+            r"(?P<desc>("
+            r"^(?P=indent)[ \t]+[^\r\n]*(?:\r?\n|\Z)"  # indented non-blank desc (new line or end)
+            r"|^[ \t]*(?:\r?\n|\Z)"  # or a fully blank line (new line or end)
+            r")+)",  # one or more lines required
+            re.MULTILINE,
+        )
 
-        for match in matches:
-            param_name, param_desc = match
-            param_descriptions[param_name] = param_desc.strip()
+        src = self.parameter_description or ""
+        results: dict[str, str] = {}
 
-        return param_descriptions
+        for m in param_pattern.finditer(src):
+            name = m.group("name")
+            desc_block = m.group("desc")
+
+            # Remove the param indent + one extra space/tab from non-blank lines.
+            desc_block = re.sub(
+                rf'(?m)^(?:{re.escape(m.group("indent"))}[ \t]+)',
+                "",
+                desc_block,
+            )
+
+            # Trim only outer whitespace; keep internal blank lines.
+            results[name] = desc_block.strip()
+
+        return results
 
     @property
     def tool_spec(self) -> "ToolSpecificationTypeDef":
