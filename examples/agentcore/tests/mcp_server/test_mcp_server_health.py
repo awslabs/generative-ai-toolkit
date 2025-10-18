@@ -1,6 +1,6 @@
 """Health check tests for AgentCore MCP server monitoring and observability."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import boto3
 
@@ -30,7 +30,7 @@ class TestMcpServerHealth:
         runtime_id = mcp_server_runtime_arn.split("/")[-1]
         cloudwatch = boto3.client("cloudwatch")
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(UTC)
         start_time = end_time - timedelta(hours=1)
 
         response = cloudwatch.get_metric_statistics(

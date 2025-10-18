@@ -13,15 +13,16 @@ export class AgentCoreIntegrationStack extends cdk.Stack {
       namePrefix: this.stackName,
     });
 
-    // Agent
-    const agent = new Agent(this, "Agent", {
-      namePrefix: this.stackName,
-    });
-
     // MCP Server with OAuth authentication
     const mcpServer = new McpServer(this, "McpServer", {
       oauthAuth: oauthAuth,
       namePrefix: this.stackName,
+    });
+
+    // Agent with MCP Server integration
+    const agent = new Agent(this, "Agent", {
+      namePrefix: this.stackName,
+      mcpServerRuntimeArn: mcpServer.runtime.attrAgentRuntimeArn,
     });
   }
 }

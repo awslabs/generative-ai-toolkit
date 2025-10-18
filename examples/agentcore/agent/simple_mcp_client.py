@@ -7,14 +7,19 @@ No complex session management or token refresh needed.
 
 import asyncio
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from .config_loader import ConfigLoader
-from .simple_auth import SimpleAuth
+# Add the agent directory to Python path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from config_loader import ConfigLoader
+from simple_auth import SimpleAuth
 
 logger = logging.getLogger(__name__)
 

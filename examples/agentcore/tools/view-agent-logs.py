@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to view CloudWatch logs for an AgentCore agent.
-Usage: python view-agent-logs.py [AGENT_NAME] [REGION] [HOURS_BACK]
+Usage: python view-agent-logs.py [AGENT_NAME] [REGION] [TIME_BACK]
 """
 
 import argparse
@@ -94,11 +94,34 @@ def colorize_log_message(message: str) -> str:
     return message
 
 
-def view_logs(agent_name: str, region: str, hours_back: int):
+def parse_time_back(time_str: str) -> timedelta:
+    """Parse time string like '30m', '2h', '1.5h' into timedelta."""
+    if isinstance(time_str, int):
+        # Backward compatibility - treat as hours
+        return timedelta(hours=time_str)
+
+    time_str = str(time_str).lower().strip()
+
+    # Extract number and unit
+    if time_str.endswith("m"):
+        minutes = float(time_str[:-1])
+        return timedelta(minutes=minutes)
+    elif time_str.endswith("h"):
+        hours = float(time_str[:-1])
+        return timedelta(hours=hours)
+    else:
+        # Default to hours if no unit specified
+        hours = float(time_str)
+        return timedelta(hours=hours)
+
+
+def view_logs(agent_name: str, region: str, time_back: str):
     """View CloudWatch logs for the agent."""
+    time_delta = parse_time_back(time_back)
+
     print(f"Looking for agent: {agent_name}")
     print(f"Region: {region}")
-    print(f"Hours back: {hours_back}")
+    print(f"Time back: {time_back} ({time_delta})")
     print("=" * 40)
 
     # Find the agent runtime
@@ -121,10 +144,10 @@ def view_logs(agent_name: str, region: str, hours_back: int):
         return False
 
     # Calculate start time
-    start_time = datetime.now() - timedelta(hours=hours_back)
+    start_time = datetime.now() - time_delta
     start_timestamp = int(start_time.timestamp() * 1000)
 
-    print(f"🔍 Fetching logs from the last {hours_back} hour(s)...")
+    print(f"🔍 Fetching logs from the last {time_back}...")
     print()
 
     try:
@@ -164,7 +187,7 @@ def view_logs(agent_name: str, region: str, hours_back: int):
         if not all_events:
             print("📝 No logs found in the specified time range.")
             print(
-                "💡 Tip: Try increasing hours back or check if the agent has been invoked recently"
+                "💡 Tip: Try increasing time back or check if the agent has been invoked recently"
             )
             return True
 
@@ -209,10 +232,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python view-agent-logs.py                                    # Use defaults
+  python view-agent-logs.py                                    # Use defaults (1h)
   python view-agent-logs.py my_agent                          # Specific agent
   python view-agent-logs.py my_agent us-east-1                # Different region
-  python view-agent-logs.py my_agent us-east-1 24             # Last 24 hours
+  python view-agent-logs.py my_agent us-east-1 30m            # Last 30 minutes
+  python view-agent-logs.py my_agent us-east-1 2h             # Last 2 hours
+  python view-agent-logs.py my_agent us-east-1 1.5h           # Last 1.5 hours
         """,
     )
 
@@ -231,16 +256,15 @@ Examples:
     )
 
     parser.add_argument(
-        "hours_back",
+        "time_back",
         nargs="?",
-        type=int,
-        default=1,
-        help="Hours back to search (default: 1)",
+        default="1h",
+        help="Time back to search - use 'm' for minutes, 'h' for hours (e.g., '30m', '2h', '1.5h'). Default: 1h",
     )
 
     args = parser.parse_args()
 
-    success = view_logs(args.agent_name, args.region, args.hours_back)
+    success = view_logs(args.agent_name, args.region, args.time_back)
     sys.exit(0 if success else 1)
 
 

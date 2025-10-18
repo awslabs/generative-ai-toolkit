@@ -1,7 +1,6 @@
 import * as cdk from "aws-cdk-lib";
 import * as bedrockagentcore from "aws-cdk-lib/aws-bedrockagentcore";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as ecr from "aws-cdk-lib/aws-ecr";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -11,6 +10,10 @@ export interface AgentProps {
    * The name prefix for Agent resources
    */
   readonly namePrefix?: string;
+  /**
+   * The MCP Server runtime ARN for tool integration
+   */
+  readonly mcpServerRuntimeArn?: string;
 }
 
 export class Agent extends Construct {
@@ -162,6 +165,9 @@ export class Agent extends Construct {
         AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
         AWS_REGION: cdk.Stack.of(this).region,
         BEDROCK_MODEL_ID: "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+        ...(props?.mcpServerRuntimeArn && {
+          MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
+        }),
       },
     });
 
