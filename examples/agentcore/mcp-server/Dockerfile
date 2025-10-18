@@ -17,12 +17,8 @@ RUN useradd -m -u 1000 agentcore
 USER agentcore
 
 # Copy application files
-COPY --chown=agentcore:agentcore mcp_server.py .
+COPY --chown=agentcore:agentcore mcp_server.py weather_tools.py weather_models.py .
 
-EXPOSE 8080
-
-# Health check endpoint (AgentCore requires /ping endpoint)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/ping || exit 1
+EXPOSE 8000
 
 CMD ["python", "mcp_server.py"]

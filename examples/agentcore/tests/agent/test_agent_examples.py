@@ -252,7 +252,7 @@ class TestAgentExamples:
                 result = response_data["result"]
                 assert len(result) > 0
 
-                print(f"Payload structure {i+1} response: {result}")
+                print(f"Payload structure {i + 1} response: {result}")
 
         except ClientError as e:
             pytest.fail(

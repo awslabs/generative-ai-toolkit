@@ -168,5 +168,5 @@ class TestAgentLocalIntegration:
         # All calls should succeed
         assert len(results) == len(sessions)
         for i, result in enumerate(results):
-            assert "result" in result, f"Session {i+1} missing result"
-            assert len(result["result"]) > 0, f"Session {i+1} empty result"
+            assert "result" in result, f"Session {i + 1} missing result"
+            assert len(result["result"]) > 0, f"Session {i + 1} empty result"
