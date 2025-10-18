@@ -55,3 +55,41 @@ class ConfigLoader:
         return UserCredentials(
             username=credentials_data["username"], password=credentials_data["password"]
         )
+
+    def get_cognito_config(self) -> tuple[str, str]:
+        """
+        Get Cognito User Pool ID and Client ID from CloudFormation stack outputs.
+
+        Returns:
+            Tuple of (user_pool_id, client_id)
+        """
+        stack_name = self.get_cdk_stack_name()
+        cf_client = boto3.client("cloudformation", region_name=self.region)
+
+        try:
+            response = cf_client.describe_stacks(StackName=stack_name)
+            outputs = response["Stacks"][0].get("Outputs", [])
+
+            user_pool_id = None
+            client_id = None
+
+            for output in outputs:
+                key = output["OutputKey"]
+                value = output["OutputValue"]
+
+                if "UserPoolId" in key:
+                    user_pool_id = value
+                elif "UserPoolClientId" in key or "ClientId" in key:
+                    client_id = value
+
+            if not user_pool_id or not client_id:
+                raise RuntimeError(
+                    "Could not find Cognito configuration in stack outputs"
+                )
+
+            return user_pool_id, client_id
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to get Cognito config from stack {stack_name}: {e}"
+            ) from e

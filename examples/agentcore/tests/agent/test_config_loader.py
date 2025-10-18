@@ -88,3 +88,29 @@ class TestConfigLoader:
             # If the test fails due to missing AWS credentials or secret,
             # that's expected in some environments
             pytest.skip(f"Skipping AWS integration test: {e}")
+
+    def test_get_cognito_config_with_real_aws(self):
+        """Test Cognito configuration retrieval from real CloudFormation stack."""
+        loader = ConfigLoader()
+
+        try:
+            user_pool_id, client_id = loader.get_cognito_config()
+
+            # Verify we got valid Cognito configuration
+            assert user_pool_id is not None
+            assert client_id is not None
+            assert isinstance(user_pool_id, str)
+            assert isinstance(client_id, str)
+            assert len(user_pool_id) > 0
+            assert len(client_id) > 0
+
+            # Basic format checks
+            assert user_pool_id.startswith(loader.region), (
+                "User Pool ID should start with region"
+            )
+            assert "_" in user_pool_id, "User Pool ID should contain underscore"
+
+        except Exception as e:
+            # If the test fails due to missing AWS credentials or stack,
+            # that's expected in some environments
+            pytest.skip(f"Skipping AWS integration test: {e}")

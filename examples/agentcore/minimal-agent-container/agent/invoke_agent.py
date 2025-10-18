@@ -10,7 +10,8 @@ control_client = boto3.client("bedrock-agentcore-control", region_name="eu-centr
 response = control_client.list_agent_runtimes()
 
 minimal_agent_runtimes = [
-    runtime for runtime in response["agentRuntimes"]
+    runtime
+    for runtime in response["agentRuntimes"]
     if runtime["agentRuntimeName"].startswith("minimal_agent")
 ]
 
@@ -21,7 +22,9 @@ if not minimal_agent_runtimes:
 latest_runtime = max(minimal_agent_runtimes, key=lambda x: x["lastUpdatedAt"])
 runtime_arn = latest_runtime["agentRuntimeArn"]
 
-print(f"Using latest agent runtime: {latest_runtime['agentRuntimeName']} ({latest_runtime['agentRuntimeId']})")
+print(
+    f"Using latest agent runtime: {latest_runtime['agentRuntimeName']} ({latest_runtime['agentRuntimeId']})"
+)
 
 payload = json.dumps({"input": {"prompt": "Test version reporting"}})
 
