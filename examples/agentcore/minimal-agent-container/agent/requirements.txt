@@ -1,5 +1,0 @@
-bedrock-agentcore>=0.1.7
-boto3>=1.34.0
-aws-opentelemetry-distro>=0.12.1
-generative-ai-toolkit
-urllib3<2  # Pin to v1.x for AWS-LC FIPS compatibility in AL2023

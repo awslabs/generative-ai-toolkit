@@ -4,6 +4,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
+import { OAuthAuth } from "./oauth-auth";
 
 export interface AgentProps {
   /**
@@ -13,7 +14,11 @@ export interface AgentProps {
   /**
    * The MCP Server runtime ARN for tool integration
    */
-  readonly mcpServerRuntimeArn?: string;
+  readonly mcpServerRuntimeArn: string;
+  /**
+   * OAuth authentication construct for accessing test user credentials
+   */
+  readonly oauthAuth: OAuthAuth;
 }
 
 export class Agent extends Construct {
@@ -22,10 +27,10 @@ export class Agent extends Construct {
   public readonly executionRole: iam.Role;
   public readonly imageAsset: DockerImageAsset;
 
-  constructor(scope: Construct, id: string, props?: AgentProps) {
+  constructor(scope: Construct, id: string, props: AgentProps) {
     super(scope, id);
 
-    const namePrefix = props?.namePrefix || cdk.Stack.of(this).stackName;
+    const namePrefix = props.namePrefix || cdk.Stack.of(this).stackName;
 
     // Build agent container
     this.imageAsset = new DockerImageAsset(this, "ImageAsset", {
@@ -142,6 +147,26 @@ export class Agent extends Construct {
                 }:runtime-endpoint/*`,
               ],
             }),
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+              ],
+              resources: [props.oauthAuth.testUserCredentials.secret.secretArn],
+            }),
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ["kms:Decrypt"],
+              resources: ["*"],
+              conditions: {
+                StringEquals: {
+                  "kms:ViaService": `secretsmanager.${
+                    cdk.Stack.of(this).region
+                  }.amazonaws.com`,
+                },
+              },
+            }),
           ],
         }),
       },
@@ -165,9 +190,12 @@ export class Agent extends Construct {
         AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
         AWS_REGION: cdk.Stack.of(this).region,
         BEDROCK_MODEL_ID: "eu.anthropic.claude-sonnet-4-20250514-v1:0",
-        ...(props?.mcpServerRuntimeArn && {
-          MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
-        }),
+        MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
+        OAUTH_CREDENTIALS_SECRET_NAME:
+          props.oauthAuth.testUserCredentials.secret.secretName,
+        OAUTH_USER_POOL_ID: props.oauthAuth.userPool.userPoolId,
+        OAUTH_USER_POOL_CLIENT_ID:
+          props.oauthAuth.userPoolClient.userPoolClientId,
       },
     });
 
@@ -196,6 +224,13 @@ export class Agent extends Construct {
     new cdk.CfnOutput(this, "ImageUri", {
       value: this.imageAsset.imageUri,
       description: "URI of the built agent container image",
+    });
+
+    // Output OAuth credentials secret name
+    new cdk.CfnOutput(this, "OAuthCredentialsSecretName", {
+      value: props.oauthAuth.testUserCredentials.secret.secretName,
+      description:
+        "Secrets Manager secret name for OAuth test user credentials",
     });
   }
 }

@@ -1,6 +1,7 @@
 """Unified pytest configuration for AgentCore tests."""
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ import pytest
 
 
 def get_cdk_stack_name() -> str:
-    """Get CDK stack name from .env file, similar to config_loader.py."""
+    """Get CDK stack name from .env file."""
 
     # First try environment variable
     if stack_name := os.getenv("CDK_STACK_NAME"):
@@ -25,6 +26,52 @@ def get_cdk_stack_name() -> str:
                     return line.split("=", 1)[1].strip()
 
     raise RuntimeError("CDK_STACK_NAME not found in environment or .env file")
+
+
+# Set required environment variables to prevent SystemExit during test collection
+# This must be done before any agent module imports
+def _setup_required_environment_variables():
+    """Set up required environment variables from CDK outputs or defaults."""
+
+    # Set defaults for basic configuration
+    os.environ["AWS_REGION"] = boto3.Session().region_name or "eu-central-1"
+    os.environ["BEDROCK_MODEL_ID"] = "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+
+    # Get CDK stack name
+    stack_name = get_cdk_stack_name()
+
+    # Get CDK outputs
+    cf_client = boto3.client("cloudformation")
+    response = cf_client.describe_stacks(StackName=stack_name)
+    stack_outputs = response["Stacks"][0]["Outputs"]
+
+    # Set environment variables from CDK outputs
+    for output in stack_outputs:
+        key = output["OutputKey"]
+        value = output["OutputValue"]
+
+        if key.startswith("McpServerRuntimeArn"):
+            os.environ["MCP_SERVER_RUNTIME_ARN"] = value
+        elif key.startswith("AgentOAuthCredentialsSecretName"):
+            os.environ["OAUTH_CREDENTIALS_SECRET_NAME"] = value
+        elif key.startswith("OAuthAuthUserPoolId"):
+            os.environ["OAUTH_USER_POOL_ID"] = value
+        elif key.startswith("OAuthAuthUserPoolClientId"):
+            os.environ["OAUTH_USER_POOL_CLIENT_ID"] = value
+        elif key.startswith("AgentRuntimeArn"):
+            os.environ["AGENT_RUNTIME_ARN"] = value
+        elif key.startswith("AgentRuntimeEndpointArn"):
+            os.environ["AGENT_RUNTIME_ENDPOINT_ARN"] = value
+        elif key.startswith("McpServerRuntimeEndpointArn"):
+            os.environ["MCP_SERVER_RUNTIME_ENDPOINT_ARN"] = value
+
+
+# Set up environment variables before any imports
+_setup_required_environment_variables()
+
+# Add agent directory to Python path for imports
+agent_dir = Path(__file__).parent.parent / "agent"
+sys.path.insert(0, str(agent_dir))
 
 
 @pytest.fixture(scope="session")
@@ -66,51 +113,7 @@ def bedrock_agentcore_client():
     return boto3.client("bedrock-agentcore")
 
 
-# Agent-specific fixtures
-@pytest.fixture(scope="session")
-def agent_runtime_arn(cdk_outputs) -> str:
-    """Get agent runtime ARN from CDK outputs."""
-    # Look for the output key that contains "AgentRuntimeArn"
-    for key, value in cdk_outputs.items():
-        if "AgentRuntimeArn" in key:
-            return value
-    raise RuntimeError(
-        "AgentRuntimeArn not found in CDK outputs. Ensure CDK stack is deployed correctly."
-    )
+# Agent-specific fixtures - now using environment variables
 
 
-@pytest.fixture(scope="session")
-def agent_runtime_endpoint_arn(cdk_outputs) -> str:
-    """Get agent runtime endpoint ARN from CDK outputs."""
-    # Look for the output key that contains "AgentRuntimeEndpointArn"
-    for key, value in cdk_outputs.items():
-        if "AgentRuntimeEndpointArn" in key:
-            return value
-    raise RuntimeError(
-        "AgentRuntimeEndpointArn not found in CDK outputs. Ensure CDK stack is deployed correctly."
-    )
-
-
-# MCP Server-specific fixtures
-@pytest.fixture(scope="session")
-def mcp_server_runtime_arn(cdk_outputs) -> str:
-    """Get MCP server runtime ARN from CDK outputs."""
-    # Look for the output key that contains "McpServerRuntimeArn"
-    for key, value in cdk_outputs.items():
-        if "McpServerRuntimeArn" in key:
-            return value
-    raise RuntimeError(
-        "McpServerRuntimeArn not found in CDK outputs. Ensure CDK stack is deployed correctly."
-    )
-
-
-@pytest.fixture(scope="session")
-def mcp_server_runtime_endpoint_arn(cdk_outputs) -> str:
-    """Get MCP server runtime endpoint ARN from CDK outputs."""
-    # Look for the output key that contains "McpServerRuntimeEndpointArn"
-    for key, value in cdk_outputs.items():
-        if "McpServerRuntimeEndpointArn" in key:
-            return value
-    raise RuntimeError(
-        "McpServerRuntimeEndpointArn not found in CDK outputs. Ensure CDK stack is deployed correctly."
-    )
+# MCP Server-specific fixtures - now using environment variables

@@ -5,33 +5,50 @@ Tests SimpleAuth with real AWS Cognito services.
 These tests require a deployed CDK stack with Cognito configuration.
 """
 
+import json
+import os
+from dataclasses import dataclass
+
+import boto3
 import pytest
-from agent.config_loader import ConfigLoader
-from agent.simple_auth import AuthenticationError, SimpleAuth
+from simple_auth import AuthenticationError, SimpleAuth
 
 
 class TestSimpleAuthIntegration:
     """Integration tests for SimpleAuth with real Cognito services."""
 
     @pytest.fixture(scope="class")
-    def config_loader(self):
-        """Create ConfigLoader instance."""
-        return ConfigLoader()
-
-    @pytest.fixture(scope="class")
-    def simple_auth(self, config_loader):
+    def simple_auth(self):
         """Create SimpleAuth instance."""
-        return SimpleAuth(region=config_loader.region)
+        region = boto3.Session().region_name
+        return SimpleAuth(region=region)
 
     @pytest.fixture(scope="class")
-    def cognito_config(self, config_loader):
-        """Get Cognito configuration from deployed CDK stack."""
-        return config_loader.get_cognito_config()
+    def cognito_config(self):
+        """Get Cognito configuration from environment variables."""
+        return (
+            os.environ["OAUTH_USER_POOL_ID"],
+            os.environ["OAUTH_USER_POOL_CLIENT_ID"],
+        )
 
     @pytest.fixture(scope="class")
-    def credentials(self, config_loader):
-        """Get user credentials from Secrets Manager."""
-        return config_loader.get_credentials()
+    def credentials(self):
+        """Get user credentials from Secrets Manager using environment variables."""
+
+        @dataclass
+        class UserCredentials:
+            username: str
+            password: str
+
+        secret_name = os.environ["OAUTH_CREDENTIALS_SECRET_NAME"]
+        region = boto3.Session().region_name
+        client = boto3.client("secretsmanager", region_name=region)
+        response = client.get_secret_value(SecretId=secret_name)
+        credentials_data = json.loads(response["SecretString"])
+
+        return UserCredentials(
+            username=credentials_data["username"], password=credentials_data["password"]
+        )
 
     def test_simple_auth_initialization(self, simple_auth):
         """Test SimpleAuth initialization."""
@@ -97,59 +114,13 @@ class TestSimpleAuthIntegration:
         # Should get an authentication error
         assert "Authentication failed" in str(exc_info.value)
 
-    def test_config_loader_get_cognito_config(self, config_loader):
-        """Test that ConfigLoader can get Cognito configuration from CDK stack."""
-        try:
-            user_pool_id, client_id = config_loader.get_cognito_config()
-
-            # Verify we got valid configuration
-            assert user_pool_id is not None
-            assert client_id is not None
-            assert isinstance(user_pool_id, str)
-            assert isinstance(client_id, str)
-            assert len(user_pool_id) > 0
-            assert len(client_id) > 0
-
-            # Basic format checks
-            assert user_pool_id.startswith(config_loader.region), (
-                "User Pool ID should start with region"
-            )
-            assert "_" in user_pool_id, "User Pool ID should contain underscore"
-
-            print("✅ Successfully loaded Cognito config:")
-            print(f"  User Pool ID: {user_pool_id}")
-            print(f"  Client ID: {client_id}")
-
-        except Exception as e:
-            pytest.fail(f"Failed to get Cognito configuration from CDK stack: {e}")
-
-    def test_config_loader_get_credentials(self, config_loader):
-        """Test that ConfigLoader can get credentials from Secrets Manager."""
-        try:
-            credentials = config_loader.get_credentials()
-
-            # Verify we got valid credentials
-            assert credentials is not None
-            assert credentials.username is not None
-            assert credentials.password is not None
-            assert isinstance(credentials.username, str)
-            assert isinstance(credentials.password, str)
-            assert len(credentials.username) > 0
-            assert len(credentials.password) > 0
-
-            print(
-                f"✅ Successfully loaded credentials for user: {credentials.username}"
-            )
-
-        except Exception as e:
-            pytest.fail(f"Failed to get credentials from Secrets Manager: {e}")
-
-    def test_end_to_end_authentication_flow(self, config_loader, simple_auth):
+    def test_end_to_end_authentication_flow(
+        self, simple_auth, cognito_config, credentials
+    ):
         """Test complete end-to-end authentication flow."""
         try:
-            # Step 1: Load configuration from CDK stack
-            user_pool_id, client_id = config_loader.get_cognito_config()
-            credentials = config_loader.get_credentials()
+            # Step 1: Get configuration from environment variables
+            user_pool_id, client_id = cognito_config
 
             # Step 2: Authenticate and get Bearer token
             token = simple_auth.get_bearer_token(

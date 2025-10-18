@@ -8,7 +8,7 @@ import sys
 
 import boto3
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from simple_mcp_client import SimpleMcpClient
+from mcp_tool_manager import McpToolManager
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
 
@@ -24,6 +24,10 @@ def validate_environment_variables():
     required_vars = {
         "AWS_REGION": "AWS region for Bedrock service",
         "BEDROCK_MODEL_ID": "Bedrock model identifier",
+        "MCP_SERVER_RUNTIME_ARN": "MCP server runtime ARN for tool integration",
+        "OAUTH_CREDENTIALS_SECRET_NAME": "OAuth credentials secret name for authentication",
+        "OAUTH_USER_POOL_ID": "OAuth Cognito User Pool ID for authentication",
+        "OAUTH_USER_POOL_CLIENT_ID": "OAuth Cognito User Pool Client ID for authentication",
     }
 
     missing_vars = []
@@ -42,115 +46,20 @@ def validate_environment_variables():
     logger.info("Key agent configuration:")
     logger.info(f"  AWS_REGION: {os.environ.get('AWS_REGION')}")
     logger.info(f"  BEDROCK_MODEL_ID: {os.environ.get('BEDROCK_MODEL_ID')}")
-
-    # Log MCP configuration (optional)
-    mcp_arn = os.environ.get("MCP_SERVER_RUNTIME_ARN")
-    if mcp_arn:
-        logger.info(f"  MCP_SERVER_RUNTIME_ARN: {mcp_arn}")
-        logger.info("  MCP integration: ENABLED")
-    else:
-        logger.info("  MCP integration: DISABLED (no MCP_SERVER_RUNTIME_ARN provided)")
+    logger.info(f"  MCP_SERVER_RUNTIME_ARN: {os.environ.get('MCP_SERVER_RUNTIME_ARN')}")
+    logger.info(
+        f"  OAUTH_CREDENTIALS_SECRET_NAME: {os.environ.get('OAUTH_CREDENTIALS_SECRET_NAME')}"
+    )
+    logger.info(f"  OAUTH_USER_POOL_ID: {os.environ.get('OAUTH_USER_POOL_ID')}")
+    logger.info(
+        f"  OAUTH_USER_POOL_CLIENT_ID: {os.environ.get('OAUTH_USER_POOL_CLIENT_ID')}"
+    )
 
 
 # Validate environment on startup
 validate_environment_variables()
 
 app = BedrockAgentCoreApp()
-
-
-class McpToolManager:
-    """Manages MCP client and tool registration."""
-
-    def __init__(self):
-        self.mcp_client: SimpleMcpClient | None = None
-        self.tools_registered = False
-
-    async def get_mcp_client(self) -> SimpleMcpClient | None:
-        """Get or create MCP client with lazy initialization."""
-        mcp_arn = os.environ.get("MCP_SERVER_RUNTIME_ARN")
-        if not mcp_arn:
-            logger.warning(
-                "No MCP_SERVER_RUNTIME_ARN provided - MCP integration disabled"
-            )
-            return None
-
-        if self.mcp_client is None:
-            try:
-                logger.info(f"Initializing MCP client for runtime: {mcp_arn}")
-                self.mcp_client = SimpleMcpClient(runtime_arn=mcp_arn)
-                await self.mcp_client.connect()
-                logger.info("MCP client connected successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize MCP client: {e}")
-                self.mcp_client = None
-                raise
-
-        return self.mcp_client
-
-    async def register_mcp_tools(self, agent: BedrockConverseAgent) -> bool:
-        """Register MCP tools with the Generative AI Toolkit agent."""
-        if self.tools_registered:
-            return True
-
-        try:
-            mcp_client = await self.get_mcp_client()
-            if not mcp_client:
-                return False
-
-            # List available tools from MCP server
-            tools_result = await mcp_client.list_tools()
-
-            if not tools_result.tools:
-                logger.warning("No tools available from MCP server")
-                return False
-
-            logger.info(f"Registering {len(tools_result.tools)} MCP tools with agent")
-
-            # Register each MCP tool with the Generative AI Toolkit
-            for mcp_tool in tools_result.tools:
-                logger.info(f"Registering tool: {mcp_tool.name}")
-
-                # Create a wrapper function for the MCP tool
-                def create_tool_wrapper(tool_name: str):
-                    async def tool_wrapper(**kwargs) -> str:
-                        """Wrapper function to call MCP tool."""
-                        try:
-                            client = await self.get_mcp_client()
-                            if not client:
-                                return "Error: MCP server not available"
-
-                            result = await client.call_tool(tool_name, kwargs)
-
-                            # Extract text content from MCP result
-                            if hasattr(result, "content") and result.content:
-                                if hasattr(result.content[0], "text"):
-                                    return result.content[0].text
-                                else:
-                                    return str(result.content[0])
-                            else:
-                                return str(result)
-
-                        except Exception as e:
-                            logger.error(f"Error calling MCP tool {tool_name}: {e}")
-                            return f"Error calling {tool_name}: {str(e)}"
-
-                    return tool_wrapper
-
-                # Create the wrapper and register it
-                tool_func = create_tool_wrapper(mcp_tool.name)
-                tool_func.__name__ = mcp_tool.name
-                tool_func.__doc__ = mcp_tool.description
-
-                # Register with the agent
-                agent.register_tool(tool_func)
-
-            self.tools_registered = True
-            logger.info("MCP tools registered successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to register MCP tools: {e}")
-            return False
 
 
 # Global MCP tool manager instance
@@ -166,13 +75,13 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
     session_id = payload.get("sessionId") or payload.get("session_id", "unknown")
     logger.info(f"Processing request for session: {session_id}")
 
-    # Handle different payload structures
-    if "input" in payload and "prompt" in payload["input"]:
-        user_message = str(payload["input"]["prompt"])
-    elif "prompt" in payload:
-        user_message = str(payload["prompt"])
-    else:
-        user_message = "No prompt provided"
+    # Extract prompt from AgentCore format
+    if "input" not in payload or "prompt" not in payload["input"]:
+        raise ValueError(
+            "Invalid payload format. Expected: {'input': {'prompt': 'message'}}"
+        )
+
+    user_message = str(payload["input"]["prompt"])
 
     # Log message with truncation for readability
     logger.info(f"Processing message: {user_message[:100]}...")
@@ -194,21 +103,13 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
 
         # Register MCP tools with lazy initialization
         try:
-            # Run async tool registration in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                tools_registered = loop.run_until_complete(
-                    mcp_manager.register_mcp_tools(agent)
-                )
-                if tools_registered:
-                    logger.info("MCP tools available for this request")
-                else:
-                    logger.warning(
-                        "MCP tools not available - using agent without tools"
-                    )
-            finally:
-                loop.close()
+            # Use a simple approach - just use asyncio.run and let the MCP manager handle connection state
+            tools_registered = asyncio.run(mcp_manager.register_mcp_tools(agent))
+
+            if tools_registered:
+                logger.info("MCP tools available for this request")
+            else:
+                logger.warning("MCP tools not available - using agent without tools")
         except Exception as mcp_error:
             logger.error(f"MCP tool registration failed: {mcp_error}")
             logger.info("Continuing without MCP tools")

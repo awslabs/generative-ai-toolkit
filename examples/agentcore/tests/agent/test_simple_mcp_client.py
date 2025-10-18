@@ -5,22 +5,23 @@ This module tests the simplified MCP client with OAuth Bearer token authenticati
 using real AgentCore Runtime MCP servers and deployed infrastructure.
 """
 
+import os
+
 import pytest
-from agent.simple_mcp_client import SimpleMcpClient
+from simple_mcp_client import SimpleMcpClient
 
 
 class TestSimpleMcpClientIntegration:
     """Integration tests with real AgentCore Runtime MCP server."""
 
     @pytest.fixture(scope="class")
-    def simple_client(self, mcp_server_runtime_arn):
+    def simple_client(self):
         """Create simple MCP client with real configuration."""
-        return SimpleMcpClient(runtime_arn=mcp_server_runtime_arn)
+        return SimpleMcpClient(runtime_arn=os.environ["MCP_SERVER_RUNTIME_ARN"])
 
-    def test_client_initialization_with_real_arn(
-        self, simple_client, mcp_server_runtime_arn
-    ):
+    def test_client_initialization_with_real_arn(self, simple_client):
         """Test client initialization with real AgentCore Runtime ARN."""
+        mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
         assert simple_client.runtime_arn == mcp_server_runtime_arn
         assert simple_client.region in mcp_server_runtime_arn
         assert not simple_client.is_connected()
@@ -175,12 +176,10 @@ class TestSimpleMcpClientIntegration:
     async def test_automatic_configuration_loading(self, simple_client):
         """Test that configuration is loaded automatically from CDK stack."""
         try:
-            # The client should be able to load configuration automatically
-            # This tests the integration with ConfigLoader
+            # The client should be able to load configuration automatically from environment variables
             await simple_client.connect()
 
             # If we get here, configuration was loaded successfully
-            assert simple_client.config_loader is not None
             assert simple_client.auth is not None
 
             # Verify we can list tools (proves authentication worked)

@@ -6,19 +6,22 @@ No complex session management or token refresh needed.
 """
 
 import asyncio
+import json
 import logging
+import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import boto3
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 # Add the agent directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config_loader import ConfigLoader
 from simple_auth import SimpleAuth
 
 logger = logging.getLogger(__name__)
@@ -39,7 +42,6 @@ class SimpleMcpClient:
         self.mcp_url = self._construct_mcp_url()
 
         # Initialize components
-        self.config_loader = ConfigLoader(region=self.region)
         self.auth = SimpleAuth(region=self.region)
 
         # Connection state
@@ -53,6 +55,23 @@ class SimpleMcpClient:
         encoded_arn = quote(self.runtime_arn, safe="")
         return f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
 
+    def _get_credentials_from_env(self):
+        """Get OAuth credentials from environment variables and Secrets Manager."""
+
+        @dataclass
+        class UserCredentials:
+            username: str
+            password: str
+
+        secret_name = os.environ["OAUTH_CREDENTIALS_SECRET_NAME"]
+        client = boto3.client("secretsmanager", region_name=self.region)
+        response = client.get_secret_value(SecretId=secret_name)
+        credentials_data = json.loads(response["SecretString"])
+
+        return UserCredentials(
+            username=credentials_data["username"], password=credentials_data["password"]
+        )
+
     async def connect(self) -> None:
         """
         Connect to AgentCore Runtime MCP server with authentication.
@@ -65,9 +84,10 @@ class SimpleMcpClient:
                 f"Connecting to AgentCore Runtime MCP server: {self.runtime_arn}"
             )
 
-            # Get configuration from deployed CDK stack
-            user_pool_id, client_id = self.config_loader.get_cognito_config()
-            credentials = self.config_loader.get_credentials()
+            # Get configuration from environment variables
+            user_pool_id = os.environ["OAUTH_USER_POOL_ID"]
+            client_id = os.environ["OAUTH_USER_POOL_CLIENT_ID"]
+            credentials = self._get_credentials_from_env()
 
             # Get Bearer token
             bearer_token = self.auth.get_bearer_token(

@@ -23,6 +23,7 @@ export class AgentCoreIntegrationStack extends cdk.Stack {
     const agent = new Agent(this, "Agent", {
       namePrefix: this.stackName,
       mcpServerRuntimeArn: mcpServer.runtime.attrAgentRuntimeArn,
+      oauthAuth: oauthAuth,
     });
   }
 }

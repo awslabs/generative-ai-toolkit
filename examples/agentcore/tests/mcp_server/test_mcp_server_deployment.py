@@ -1,6 +1,7 @@
 """Test the deployed AgentCore MCP server deployment and basic protocol functionality."""
 
 import asyncio
+import os
 from urllib.parse import quote
 
 import pytest
@@ -19,8 +20,9 @@ def _construct_mcp_endpoint_url(mcp_server_runtime_arn: str) -> str:
 class TestMcpServerDeployment:
     """Test suite for MCP server deployment verification."""
 
-    def test_mcp_server_endpoint_url_construction(self, mcp_server_runtime_arn):
+    def test_mcp_server_endpoint_url_construction(self):
         """Test that MCP endpoint URL can be constructed from runtime ARN."""
+        mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
         mcp_url = _construct_mcp_endpoint_url(mcp_server_runtime_arn)
 
         # Verify URL structure
@@ -34,10 +36,9 @@ class TestMcpServerDeployment:
 
         print(f"✅ MCP endpoint URL constructed: {mcp_url}")
 
-    def test_mcp_server_runtime_exists(
-        self, bedrock_agentcore_control_client, mcp_server_runtime_arn
-    ):
+    def test_mcp_server_runtime_exists(self, bedrock_agentcore_control_client):
         """Test that the MCP server runtime exists and is accessible."""
+        mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
         runtime_id = mcp_server_runtime_arn.split("/")[-1]
 
         try:
@@ -50,10 +51,9 @@ class TestMcpServerDeployment:
         except ClientError as e:
             pytest.fail(f"Failed to get MCP server runtime: {e}")
 
-    def test_mcp_server_runtime_endpoint_exists(
-        self, bedrock_agentcore_control_client, mcp_server_runtime_endpoint_arn
-    ):
+    def test_mcp_server_runtime_endpoint_exists(self, bedrock_agentcore_control_client):
         """Test that the MCP server runtime endpoint exists and is accessible."""
+        mcp_server_runtime_endpoint_arn = os.environ["MCP_SERVER_RUNTIME_ENDPOINT_ARN"]
         arn_parts = mcp_server_runtime_endpoint_arn.split("/")
         runtime_id = arn_parts[-3]
         endpoint_name = arn_parts[-1]
@@ -69,7 +69,7 @@ class TestMcpServerDeployment:
             pytest.fail(f"Failed to get MCP server runtime endpoint: {e}")
 
     def test_mcp_server_security_and_protocol_compliance(
-        self, bedrock_agentcore_client, mcp_server_runtime_arn
+        self, bedrock_agentcore_client
     ):
         """Test MCP server security and protocol compliance.
 
@@ -80,6 +80,7 @@ class TestMcpServerDeployment:
         """
 
         async def run_mcp_test():
+            mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
             mcp_url = _construct_mcp_endpoint_url(mcp_server_runtime_arn)
             auth_error_received = False
 
