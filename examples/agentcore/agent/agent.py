@@ -66,9 +66,8 @@ app = BedrockAgentCoreApp()
 mcp_manager = McpToolManager()
 
 
-@app.entrypoint
-def invoke(payload: dict[str, object]) -> dict[str, str]:
-    """Process agent invocation from AgentCore Runtime."""
+def extract_session_info(payload: dict[str, object]) -> tuple[str, str]:
+    """Extract session ID and user message from AgentCore payload."""
     logger.info(f"Received invocation: {payload}")
 
     # Extract session ID for correlation (AgentCore observability best practice)
@@ -82,83 +81,112 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
         )
 
     user_message = str(payload["input"]["prompt"])
-
-    # Log message with truncation for readability
     logger.info(f"Processing message: {user_message[:100]}...")
 
+    return session_id, user_message
+
+
+def create_bedrock_agent() -> BedrockConverseAgent:
+    """Create and configure the Bedrock Converse Agent."""
+    region_name = os.environ["AWS_REGION"]  # Required env var, validated at startup
+    model_id = os.environ["BEDROCK_MODEL_ID"]  # Required env var, validated at startup
+
+    session = boto3.Session(region_name=region_name)
+
+    return BedrockConverseAgent(
+        model_id=model_id,
+        session=session,
+        system_prompt="You are a helpful weather assistant. You have access to weather tools to provide accurate, real-time weather information. Use the available tools when users ask about weather conditions, forecasts, or related information.",
+    )
+
+
+def register_mcp_tools_safely(agent: BedrockConverseAgent) -> bool:
+    """Register MCP tools with the agent, handling errors gracefully."""
     try:
-        # Create Generative AI Toolkit agent
-        region_name = os.environ["AWS_REGION"]  # Required env var, validated at startup
-        model_id = os.environ[
-            "BEDROCK_MODEL_ID"
-        ]  # Required env var, validated at startup
+        # Use a simple approach - just use asyncio.run and let the MCP manager handle connection state
+        tools_registered = asyncio.run(mcp_manager.register_mcp_tools(agent))
 
-        session = boto3.Session(region_name=region_name)
+        if tools_registered:
+            logger.info("MCP tools available for this request")
+            return True
+        else:
+            logger.warning("MCP tools not available - using agent without tools")
+            return False
+    except Exception as mcp_error:
+        logger.error(f"MCP tool registration failed: {mcp_error}")
+        logger.info("Continuing without MCP tools")
+        return False
 
-        agent = BedrockConverseAgent(
-            model_id=model_id,
-            session=session,
-            system_prompt="You are a helpful weather assistant. You have access to weather tools to provide accurate, real-time weather information. Use the available tools when users ask about weather conditions, forecasts, or related information.",
+
+def handle_bedrock_validation_error(error_msg: str) -> dict[str, str]:
+    """Handle specific Bedrock ValidationException errors."""
+    if "model identifier is invalid" in error_msg:
+        logger.error(
+            f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' is not available in region '{os.environ.get('AWS_REGION')}'"
         )
+        logger.error(
+            "Please check available models with: aws bedrock list-foundation-models --region <your-region>"
+        )
+        return {
+            "result": f"Model configuration error: {os.environ.get('BEDROCK_MODEL_ID')} is not available in {os.environ.get('AWS_REGION')}"
+        }
+    elif "on-demand throughput isn't supported" in error_msg:
+        logger.error(
+            f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' requires an inference profile for access"
+        )
+        logger.error(
+            "Please check available inference profiles with: aws bedrock list-inference-profiles --region <your-region>"
+        )
+        logger.error("Use an inference profile ID instead of the direct model ID")
+        return {
+            "result": f"Model access error: {os.environ.get('BEDROCK_MODEL_ID')} requires an inference profile. Use an inference profile ID instead."
+        }
+    return None
 
-        # Register MCP tools with lazy initialization
-        try:
-            # Use a simple approach - just use asyncio.run and let the MCP manager handle connection state
-            tools_registered = asyncio.run(mcp_manager.register_mcp_tools(agent))
 
-            if tools_registered:
-                logger.info("MCP tools available for this request")
-            else:
-                logger.warning("MCP tools not available - using agent without tools")
-        except Exception as mcp_error:
-            logger.error(f"MCP tool registration failed: {mcp_error}")
-            logger.info("Continuing without MCP tools")
+def handle_error(e: Exception) -> dict[str, str]:
+    """Handle and categorize different types of errors."""
+    error_msg = str(e)
+
+    # Handle Bedrock ValidationException errors
+    if "ValidationException" in error_msg:
+        bedrock_error_response = handle_bedrock_validation_error(error_msg)
+        if bedrock_error_response:
+            return bedrock_error_response
+
+    logger.error(f"Error processing invocation: {e}", exc_info=True)
+
+    # Check if this is an MCP-related error
+    if "mcp" in error_msg.lower() or "tool" in error_msg.lower():
+        return {
+            "result": "I'm sorry, but I'm currently unable to access weather tools. Please try again later or contact support if the issue persists."
+        }
+
+    return {"result": f"Error: {error_msg}"}
+
+
+@app.entrypoint
+def invoke(payload: dict[str, object]) -> dict[str, str]:
+    """Process agent invocation from AgentCore Runtime."""
+    try:
+        # Extract session information and user message
+        session_id, user_message = extract_session_info(payload)
+
+        # Create Bedrock agent
+        agent = create_bedrock_agent()
+
+        # Register MCP tools with error handling
+        register_mcp_tools_safely(agent)
 
         # Get response from agent (with or without tools)
         logger.info("Calling Bedrock Converse API")
         response = agent.converse(user_message)
 
         logger.info(f"Sending response: {response[:100]}...")
-
         return {"result": response}
 
     except Exception as e:
-        # Enhanced error handling for common Bedrock issues
-        error_msg = str(e)
-        if "ValidationException" in error_msg:
-            if "model identifier is invalid" in error_msg:
-                logger.error(
-                    f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' is not available in region '{os.environ.get('AWS_REGION')}'"
-                )
-                logger.error(
-                    "Please check available models with: aws bedrock list-foundation-models --region <your-region>"
-                )
-                return {
-                    "result": f"Model configuration error: {os.environ.get('BEDROCK_MODEL_ID')} is not available in {os.environ.get('AWS_REGION')}"
-                }
-            elif "on-demand throughput isn't supported" in error_msg:
-                logger.error(
-                    f"Model '{os.environ.get('BEDROCK_MODEL_ID')}' requires an inference profile for access"
-                )
-                logger.error(
-                    "Please check available inference profiles with: aws bedrock list-inference-profiles --region <your-region>"
-                )
-                logger.error(
-                    "Use an inference profile ID instead of the direct model ID"
-                )
-                return {
-                    "result": f"Model access error: {os.environ.get('BEDROCK_MODEL_ID')} requires an inference profile. Use an inference profile ID instead."
-                }
-
-        logger.error(f"Error processing invocation: {e}", exc_info=True)
-
-        # Check if this is an MCP-related error
-        if "mcp" in error_msg.lower() or "tool" in error_msg.lower():
-            return {
-                "result": "I'm sorry, but I'm currently unable to access weather tools. Please try again later or contact support if the issue persists."
-            }
-
-        return {"result": f"Error: {error_msg}"}
+        return handle_error(e)
 
 
 if __name__ == "__main__":
