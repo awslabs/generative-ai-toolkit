@@ -88,13 +88,32 @@ class TestMcpServerDeployment:
         # Verify request parameter exists (Pydantic model parameter)
         assert "request" in schema["properties"]
         request_prop = schema["properties"]["request"]
-        assert request_prop["type"] == "object"
-        assert "properties" in request_prop
-        assert "required" in request_prop
 
-        # Verify city property exists within the request object
-        assert "city" in request_prop["properties"]
-        city_prop = request_prop["properties"]["city"]
+        # The request should reference a Pydantic model definition
+        if "$ref" in request_prop:
+            # Schema uses $ref to reference model definition
+            assert "$defs" in schema or "definitions" in schema
+            # Find the referenced model in definitions
+            ref_path = request_prop["$ref"]
+            if ref_path.startswith("#/$defs/"):
+                model_name = ref_path.split("/")[-1]
+                model_def = schema["$defs"][model_name]
+            elif ref_path.startswith("#/definitions/"):
+                model_name = ref_path.split("/")[-1]
+                model_def = schema["definitions"][model_name]
+            else:
+                model_def = request_prop
+        else:
+            # Schema has model definition inline
+            model_def = request_prop
+
+        assert model_def["type"] == "object"
+        assert "properties" in model_def
+        assert "required" in model_def
+
+        # Verify city property exists within the model
+        assert "city" in model_def["properties"]
+        city_prop = model_def["properties"]["city"]
         assert city_prop["type"] == "string"
         assert "description" in city_prop
         assert "minLength" in city_prop
@@ -102,7 +121,7 @@ class TestMcpServerDeployment:
 
         # Verify required fields
         assert "request" in schema["required"]
-        assert "city" in request_prop["required"]
+        assert "city" in model_def["required"]
 
     @pytest.mark.asyncio
     async def test_forecast_tool_json_schema_structure(self, cdk_outputs):
@@ -134,29 +153,48 @@ class TestMcpServerDeployment:
         # Verify request parameter exists (Pydantic model parameter)
         assert "request" in schema["properties"]
         request_prop = schema["properties"]["request"]
-        assert request_prop["type"] == "object"
-        assert "properties" in request_prop
-        assert "required" in request_prop
 
-        # Verify city property within the request object
-        assert "city" in request_prop["properties"]
-        city_prop = request_prop["properties"]["city"]
+        # The request should reference a Pydantic model definition
+        if "$ref" in request_prop:
+            # Schema uses $ref to reference model definition
+            assert "$defs" in schema or "definitions" in schema
+            # Find the referenced model in definitions
+            ref_path = request_prop["$ref"]
+            if ref_path.startswith("#/$defs/"):
+                model_name = ref_path.split("/")[-1]
+                model_def = schema["$defs"][model_name]
+            elif ref_path.startswith("#/definitions/"):
+                model_name = ref_path.split("/")[-1]
+                model_def = schema["definitions"][model_name]
+            else:
+                model_def = request_prop
+        else:
+            # Schema has model definition inline
+            model_def = request_prop
+
+        assert model_def["type"] == "object"
+        assert "properties" in model_def
+        assert "required" in model_def
+
+        # Verify city property within the model
+        assert "city" in model_def["properties"]
+        city_prop = model_def["properties"]["city"]
         assert city_prop["type"] == "string"
         assert "description" in city_prop
 
-        # Verify days property within the request object
-        assert "days" in request_prop["properties"]
-        days_prop = request_prop["properties"]["days"]
+        # Verify days property within the model
+        assert "days" in model_def["properties"]
+        days_prop = model_def["properties"]["days"]
         assert days_prop["type"] == "integer"
         assert "default" in days_prop
         assert days_prop["default"] == 3
         assert "minimum" in days_prop
         assert "maximum" in days_prop
 
-        # Verify required fields (request is required, within request only city is required)
+        # Verify required fields (request is required, within model only city is required)
         assert "request" in schema["required"]
-        assert "city" in request_prop["required"]
-        assert "days" not in request_prop["required"]
+        assert "city" in model_def["required"]
+        assert "days" not in model_def["required"]
 
     @pytest.mark.asyncio
     async def test_tool_schemas_are_valid_json(self, cdk_outputs):
@@ -210,8 +248,20 @@ class TestMcpServerDeployment:
         )
         assert weather_tool is not None
 
+        # Get the model definition (handle $ref or inline)
         weather_request_schema = weather_tool.inputSchema["properties"]["request"]
-        city_prop = weather_request_schema["properties"]["city"]
+        if "$ref" in weather_request_schema:
+            ref_path = weather_request_schema["$ref"]
+            if ref_path.startswith("#/$defs/"):
+                model_name = ref_path.split("/")[-1]
+                weather_model_def = weather_tool.inputSchema["$defs"][model_name]
+            elif ref_path.startswith("#/definitions/"):
+                model_name = ref_path.split("/")[-1]
+                weather_model_def = weather_tool.inputSchema["definitions"][model_name]
+        else:
+            weather_model_def = weather_request_schema
+
+        city_prop = weather_model_def["properties"]["city"]
 
         # Verify Pydantic Field validation rules are preserved
         assert city_prop["minLength"] == 1
@@ -225,8 +275,22 @@ class TestMcpServerDeployment:
         )
         assert forecast_tool is not None
 
+        # Get the model definition (handle $ref or inline)
         forecast_request_schema = forecast_tool.inputSchema["properties"]["request"]
-        days_prop = forecast_request_schema["properties"]["days"]
+        if "$ref" in forecast_request_schema:
+            ref_path = forecast_request_schema["$ref"]
+            if ref_path.startswith("#/$defs/"):
+                model_name = ref_path.split("/")[-1]
+                forecast_model_def = forecast_tool.inputSchema["$defs"][model_name]
+            elif ref_path.startswith("#/definitions/"):
+                model_name = ref_path.split("/")[-1]
+                forecast_model_def = forecast_tool.inputSchema["definitions"][
+                    model_name
+                ]
+        else:
+            forecast_model_def = forecast_request_schema
+
+        days_prop = forecast_model_def["properties"]["days"]
 
         # Verify Pydantic Field validation rules for days
         assert days_prop["minimum"] == 1
@@ -243,14 +307,28 @@ class TestMcpServerDeployment:
         for tool in tools:
             request_schema = tool.inputSchema["properties"]["request"]
 
+            # Get the model definition (handle $ref or inline)
+            if "$ref" in request_schema:
+                ref_path = request_schema["$ref"]
+                if ref_path.startswith("#/$defs/"):
+                    model_name = ref_path.split("/")[-1]
+                    model_def = tool.inputSchema["$defs"][model_name]
+                elif ref_path.startswith("#/definitions/"):
+                    model_name = ref_path.split("/")[-1]
+                    model_def = tool.inputSchema["definitions"][model_name]
+                else:
+                    model_def = request_schema
+            else:
+                model_def = request_schema
+
             # Verify Pydantic model has title
-            assert "title" in request_schema
-            assert isinstance(request_schema["title"], str)
-            assert len(request_schema["title"]) > 0
+            assert "title" in model_def
+            assert isinstance(model_def["title"], str)
+            assert len(model_def["title"]) > 0
 
             # Verify Pydantic model has description with examples
-            if "description" in request_schema:
-                description = request_schema["description"]
+            if "description" in model_def:
+                description = model_def["description"]
                 assert isinstance(description, str)
                 # Should contain usage examples from our Pydantic model docstrings
                 assert any(

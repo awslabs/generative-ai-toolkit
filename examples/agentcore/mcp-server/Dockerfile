@@ -17,7 +17,7 @@ RUN useradd -m -u 1000 agentcore
 USER agentcore
 
 # Copy application files
-COPY --chown=agentcore:agentcore mcp_server.py weather_tools.py weather_models.py .
+COPY --chown=agentcore:agentcore *.py .
 
 EXPOSE 8000
 
