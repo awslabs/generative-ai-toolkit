@@ -87,8 +87,15 @@ class McpToolManager:
                 tool_func.__name__ = mcp_tool.name
                 tool_func.__doc__ = mcp_tool.description
 
+                # Create tool_spec in Bedrock format from MCP tool schema
+                tool_spec = {
+                    "name": mcp_tool.name,
+                    "description": mcp_tool.description,
+                    "inputSchema": {"json": mcp_tool.inputSchema},
+                }
+
                 # Register with the agent
-                agent.register_tool(tool_func)
+                agent.register_tool(tool_func, tool_spec=tool_spec)
 
             self.tools_registered = True
             logger.info("MCP tools registered successfully")

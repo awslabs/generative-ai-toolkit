@@ -1,20 +1,21 @@
 """
-Implementation of weather tools using Pydantic models.
+Implementation of weather tools for MCP server using Pydantic models.
 
-This module implements weather tools that follow the Generative AI Toolkit interface
-and demonstrate:
+This module implements weather tools for the FastMCP server and demonstrates:
 
 1. Using Pydantic models for input/output validation
-2. Implementing tools with proper tool specifications
+2. Tool registration with FastMCP decorators
 3. Clear tool specifications for LLM consumption
 4. Proper error handling and response structuring
 
-The tools provide weather information and forecasts for cities.
+The tools provide weather information and forecasts for cities via MCP protocol.
 """
 
+import json
 import logging
 from typing import Any
 
+from mcp.server.fastmcp import FastMCP
 from weather_models import (
     WeatherForecastRequest,
     WeatherForecastResponse,
@@ -31,22 +32,6 @@ class WeatherTool:
 
     This tool provides current weather conditions for a specified city.
     """
-
-    @property
-    def tool_spec(self) -> dict[str, Any]:
-        """
-        Get the tool specification for the weather tool.
-
-        Returns:
-            Dictionary containing the tool specification.
-        """
-        schema = WeatherRequest.model_json_schema()
-
-        return {
-            "name": "get_weather",
-            "description": WeatherRequest.__doc__,
-            "inputSchema": schema,
-        }
 
     def invoke(self, **kwargs) -> dict[str, Any]:
         """
@@ -106,22 +91,6 @@ class WeatherForecastTool:
     This tool provides weather forecasts for a specified number of days.
     """
 
-    @property
-    def tool_spec(self) -> dict[str, Any]:
-        """
-        Get the tool specification for the weather forecast tool.
-
-        Returns:
-            Dictionary containing the tool specification.
-        """
-        schema = WeatherForecastRequest.model_json_schema()
-
-        return {
-            "name": "get_forecast",
-            "description": WeatherForecastRequest.__doc__,
-            "inputSchema": schema,
-        }
-
     def invoke(self, **kwargs) -> dict[str, Any]:
         """
         Invoke the weather forecast tool.
@@ -175,3 +144,61 @@ class WeatherForecastTool:
             conditions="sunny",
             message=f"Successfully retrieved {request.days}-day forecast for {request.city}",
         )
+
+
+# Initialize tool instances
+_weather_tool = WeatherTool()
+_forecast_tool = WeatherForecastTool()
+
+
+def register_weather_tools(mcp: FastMCP) -> None:
+    """
+    Register weather tools with the FastMCP server.
+
+    Note: The LLM learns about available tools from the **Request Pydantic models**:
+
+    - **Model docstrings** (like WeatherRequest.__doc__): Provide the tool
+      description and usage guidance that help the LLM decide WHEN to use each tool.
+      These contain examples of user queries that should trigger the tool.
+
+    - **Field descriptions**: Define parameter types, validation rules, and
+      constraints that tell the LLM HOW to structure the tool parameters correctly.
+
+    FastMCP automatically transforms these Pydantic models into JSON schemas that
+    the LLM consumes. The Request model docstrings are the primary source for
+    tool selection guidance - make sure they clearly describe when to use each
+    tool and include realistic usage examples.
+
+    Args:
+        mcp: The FastMCP server instance to register tools with.
+    """
+
+    @mcp.tool()
+    def get_weather(request: WeatherRequest) -> str:
+        """Get current weather for a city.
+
+        Args:
+            request: Weather request parameters
+
+        Returns:
+            JSON string containing weather information
+        """
+        logger.info(f"get_weather called with request: {request}")
+        result = _weather_tool.invoke(city=request.city)
+        logger.info("get_weather completed successfully")
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def get_forecast(request: WeatherForecastRequest) -> str:
+        """Get weather forecast for a city.
+
+        Args:
+            request: Weather forecast request parameters
+
+        Returns:
+            JSON string containing forecast information
+        """
+        logger.info(f"get_forecast called with request: {request}")
+        result = _forecast_tool.invoke(city=request.city, days=request.days)
+        logger.info("get_forecast completed successfully")
+        return json.dumps(result, indent=2)
