@@ -46,7 +46,10 @@ export class McpServer extends Construct {
         resources: [
           `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
             cdk.Stack.of(this).account
-          }:*`,
+          }:workload-identity-directory/*`,
+          `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
+            cdk.Stack.of(this).account
+          }:runtime/*`,
         ],
       }),
       new iam.PolicyStatement({
@@ -69,7 +72,7 @@ export class McpServer extends Construct {
         resources: [
           `arn:aws:logs:${cdk.Stack.of(this).region}:${
             cdk.Stack.of(this).account
-          }:log-group:*`,
+          }:log-group:/aws/bedrock-agentcore/*`,
         ],
       }),
       new iam.PolicyStatement({

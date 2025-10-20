@@ -3,7 +3,9 @@ import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 import * as fs from "fs";
 import * as path from "path";
+import { AwsSolutionsChecks } from "cdk-nag";
 import { AgentCoreIntegrationStack } from "../lib/agentcore-stack";
+import { CdkNagSuppressions } from "../lib/cdk-nag-suppressions";
 
 function getStackName(): string {
   // Priority order:
@@ -61,12 +63,27 @@ const stackName = getStackName();
 // Write the stack name to .env file for persistence and VS Code integration
 writeStackNameToEnv(stackName);
 
-new AgentCoreIntegrationStack(app, stackName, {
+const stack = new AgentCoreIntegrationStack(app, stackName, {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
   },
 });
+
+// Apply CDK Nag AwsSolutionsChecks
+// CDK Nag is disabled by default. Set CDK_NAG_ENABLED=true to enable
+const cdkNagEnabled = process.env.CDK_NAG_ENABLED === "true";
+if (cdkNagEnabled) {
+  // Apply CDK Nag suppressions before running checks
+  CdkNagSuppressions.applySuppressions(stack);
+
+  cdk.Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
+  console.log(
+    "CDK Nag AwsSolutionsChecks applied to the stack with suppressions"
+  );
+} else {
+  console.log("CDK Nag disabled (set CDK_NAG_ENABLED=true to enable)");
+}
 
 // Output the stack name for reference
 console.log(`Deploying stack: ${stackName}`);

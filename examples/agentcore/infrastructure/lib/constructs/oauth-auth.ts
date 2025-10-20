@@ -202,7 +202,11 @@ export class OAuthAuth extends Construct {
         new iam.PolicyStatement({
           effect: iam.Effect.ALLOW,
           actions: ["kms:Decrypt"],
-          resources: ["*"],
+          resources: [
+            `arn:aws:kms:${cdk.Stack.of(this).region}:${
+              cdk.Stack.of(this).account
+            }:alias/aws/secretsmanager`,
+          ],
           conditions: {
             StringEquals: {
               "kms:ViaService": `secretsmanager.${

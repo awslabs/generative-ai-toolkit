@@ -61,7 +61,10 @@ export class Agent extends Construct {
               resources: [
                 `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:*`,
+                }:workload-identity-directory/*`,
+                `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:runtime/*`,
               ],
             }),
             new iam.PolicyStatement({
@@ -97,7 +100,7 @@ export class Agent extends Construct {
               resources: [
                 `arn:aws:logs:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:log-group:*`,
+                }:log-group:/aws/bedrock-agentcore/*`,
               ],
             }),
             new iam.PolicyStatement({
@@ -111,7 +114,10 @@ export class Agent extends Construct {
               resources: [
                 `arn:aws:xray:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:*`,
+                }:trace/*`,
+                `arn:aws:xray:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:sampling-rule/*`,
               ],
             }),
             new iam.PolicyStatement({
@@ -158,7 +164,11 @@ export class Agent extends Construct {
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["kms:Decrypt"],
-              resources: ["*"],
+              resources: [
+                `arn:aws:kms:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:alias/aws/secretsmanager`,
+              ],
               conditions: {
                 StringEquals: {
                   "kms:ViaService": `secretsmanager.${

@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.100.0",
-    "constructs": "^10.4.2"
+    "constructs": "^10.4.2",
+    "cdk-nag": "^2.37.55"
   },
   "overrides": {
     "@types/node": "^20.0.0"
