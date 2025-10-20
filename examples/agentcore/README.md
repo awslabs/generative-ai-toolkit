@@ -94,6 +94,9 @@ cd infrastructure
 # Bootstrap CDK (first time only)
 npx cdk bootstrap
 
+# Optional: Set custom stack name (defaults to "{username}-agentcore-stack")
+export CDK_STACK_NAME=MyWeatherAgent
+
 # Deploy the stack
 npx cdk deploy --all
 ```
@@ -113,7 +116,12 @@ The CDK deployment automatically builds and pushes the Docker images to ECR. Mon
 ```bash
 # Run the test suite to verify deployment
 cd ../tests
-python -m pytest test_agent_deployment.py -v
+
+# Test agent deployment
+python -m pytest agent/test_agent_deployment.py -v
+
+# Test MCP server deployment
+python -m pytest mcp_server/test_mcp_server_deployment.py -v
 ```
 
 ### Local Development
