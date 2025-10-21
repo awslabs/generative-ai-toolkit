@@ -11,6 +11,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from mcp_tool_manager import McpToolManager
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.tracer import InMemoryTracer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -86,18 +87,23 @@ def extract_session_info(payload: dict[str, object]) -> tuple[str, str]:
     return session_id, user_message
 
 
-def create_bedrock_agent() -> BedrockConverseAgent:
+def create_bedrock_agent(tracer=None) -> BedrockConverseAgent:
     """Create and configure the Bedrock Converse Agent."""
     region_name = os.environ["AWS_REGION"]  # Required env var, validated at startup
     model_id = os.environ["BEDROCK_MODEL_ID"]  # Required env var, validated at startup
 
     session = boto3.Session(region_name=region_name)
 
-    return BedrockConverseAgent(
-        model_id=model_id,
-        session=session,
-        system_prompt="You are a helpful weather assistant. You have access to weather tools to provide accurate, real-time weather information. Use the available tools when users ask about weather conditions, forecasts, or related information.",
-    )
+    agent_kwargs = {
+        "model_id": model_id,
+        "session": session,
+        "system_prompt": "You are a helpful weather assistant. You have access to weather tools to provide accurate, real-time weather information. Use the available tools when users ask about weather conditions, forecasts, or related information.",
+    }
+
+    if tracer:
+        agent_kwargs["tracer"] = tracer
+
+    return BedrockConverseAgent(**agent_kwargs)
 
 
 def register_mcp_tools_safely(agent: BedrockConverseAgent) -> bool:
@@ -165,6 +171,13 @@ def handle_error(e: Exception) -> dict[str, str]:
     return {"result": f"Error: {error_msg}"}
 
 
+# Module-level agent instance - created once and reused
+bedrock_agent: BedrockConverseAgent = create_bedrock_agent(tracer=InMemoryTracer())
+
+# Register MCP tools
+register_mcp_tools_safely(bedrock_agent)
+
+
 @app.entrypoint
 def invoke(payload: dict[str, object]) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
@@ -172,15 +185,9 @@ def invoke(payload: dict[str, object]) -> dict[str, str]:
         # Extract session information and user message
         session_id, user_message = extract_session_info(payload)
 
-        # Create Bedrock agent
-        agent = create_bedrock_agent()
-
-        # Register MCP tools with error handling
-        register_mcp_tools_safely(agent)
-
         # Get response from agent (with or without tools)
         logger.info("Calling Bedrock Converse API")
-        response = agent.converse(user_message)
+        response = bedrock_agent.converse(user_message)
 
         logger.info(f"Sending response: {response[:100]}...")
         return {"result": response}

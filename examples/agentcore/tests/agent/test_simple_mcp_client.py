@@ -69,8 +69,12 @@ class TestSimpleMcpClientIntegration:
             tools_result = await simple_client.list_tools()
 
             # Verify we got tools
-            assert hasattr(tools_result, "tools"), "Expected tools in response"  # nosec B101
-            assert len(tools_result.tools) > 0, "Expected at least one tool"  # nosec B101
+            assert hasattr(
+                tools_result, "tools"
+            ), "Expected tools in response"  # nosec B101
+            assert (
+                len(tools_result.tools) > 0
+            ), "Expected at least one tool"  # nosec B101
 
             # Log available tools for debugging
             print(f"\nFound {len(tools_result.tools)} tools:")
@@ -80,8 +84,12 @@ class TestSimpleMcpClientIntegration:
             # Verify tool structure
             first_tool = tools_result.tools[0]
             assert hasattr(first_tool, "name"), "Tool should have name"  # nosec B101
-            assert hasattr(first_tool, "description"), "Tool should have description"  # nosec B101
-            assert hasattr(first_tool, "inputSchema"), "Tool should have input schema"  # nosec B101
+            assert hasattr(
+                first_tool, "description"
+            ), "Tool should have description"  # nosec B101
+            assert hasattr(
+                first_tool, "inputSchema"
+            ), "Tool should have input schema"  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Failed to list tools from MCP server: {e}")
@@ -91,66 +99,90 @@ class TestSimpleMcpClientIntegration:
 
     @pytest.mark.asyncio
     async def test_call_tool_on_deployed_mcp_server(self, simple_client):
-        """Test calling a tool on deployed AgentCore Runtime MCP server."""
+        """Test calling weather tools on deployed AgentCore Runtime MCP server."""
         try:
             # Connect and get tools
             await simple_client.connect()
             tools_result = await simple_client.list_tools()
 
-            if not tools_result.tools:
-                pytest.skip("No tools available to test")
+            # Test must fail if no tools are available
+            assert (
+                tools_result.tools
+            ), "MCP server must have tools available"  # nosec B101
+            assert (
+                len(tools_result.tools) > 0
+            ), "Expected at least one tool from MCP server"  # nosec B101
 
-            # Find a simple tool to test (prefer one with minimal parameters)
-            test_tool = None
+            # Find and test get_weather tool
+            weather_tool = None
+            forecast_tool = None
+
             for tool in tools_result.tools:
-                # Look for tools that might not require parameters or have simple parameters
-                if "weather" in tool.name.lower() or "hello" in tool.name.lower():
-                    test_tool = tool
-                    break
+                if tool.name == "get_weather":
+                    weather_tool = tool
+                elif tool.name == "get_forecast":
+                    forecast_tool = tool
 
-            if not test_tool:
-                test_tool = tools_result.tools[0]  # Use first available tool
+            # Test get_weather tool
+            if weather_tool:
+                print("\nTesting get_weather tool:")
+                print(f"Description: {weather_tool.description}")
 
-            print(f"\nTesting tool: {test_tool.name}")
-            print(f"Description: {test_tool.description}")
-            print(f"Input schema: {test_tool.inputSchema}")
+                result = await simple_client.call_tool(
+                    "get_weather", {"city": "Amsterdam"}
+                )
 
-            # Try to call the tool with appropriate parameters
-            try:
-                # For weather tools, try with a city parameter (based on our MCP server implementation)
-                if "weather" in test_tool.name.lower():
-                    result = await simple_client.call_tool(
-                        test_tool.name, {"city": "Amsterdam"}
-                    )
-                # For forecast tools, try with city and days parameters
-                elif "forecast" in test_tool.name.lower():
-                    result = await simple_client.call_tool(
-                        test_tool.name, {"city": "Amsterdam", "days": 3}
-                    )
-                # For greeting tools, try with a name
-                elif (
-                    "hello" in test_tool.name.lower()
-                    or "greet" in test_tool.name.lower()
-                ):
-                    result = await simple_client.call_tool(
-                        test_tool.name, {"name": "Test User"}
-                    )
-                # For other tools, try with empty parameters first
-                else:
-                    result = await simple_client.call_tool(test_tool.name, {})
+                assert (
+                    result is not None
+                ), "get_weather tool should return a result"  # nosec B101
+                print(f"Weather result: {result}")
 
-                # Verify we got a result
-                assert result is not None, "Tool should return a result"  # nosec B101
-                print(f"Tool result: {result}")
+                # Verify the result contains expected weather information
+                result_str = str(result).lower()
+                assert (
+                    "amsterdam" in result_str
+                ), "Result should mention Amsterdam"  # nosec B101
+                assert any(
+                    indicator in result_str
+                    for indicator in ["weather", "temperature", "sunny", "°c"]
+                ), "Result should contain weather information"  # nosec B101
 
-            except Exception as tool_error:
-                # If the tool call fails, it might be due to missing/incorrect parameters
-                # This is still a successful test of the connection and protocol
-                print(f"Tool call failed (expected for some tools): {tool_error}")
-                # Don't fail the test - the connection and protocol worked
+            # Test get_forecast tool
+            if forecast_tool:
+                print("\nTesting get_forecast tool:")
+                print(f"Description: {forecast_tool.description}")
+
+                result = await simple_client.call_tool(
+                    "get_forecast", {"city": "London", "days": 5}
+                )
+
+                assert (
+                    result is not None
+                ), "get_forecast tool should return a result"  # nosec B101
+                print(f"Forecast result: {result}")
+
+                # Verify the result contains expected forecast information
+                result_str = str(result).lower()
+                assert (
+                    "london" in result_str
+                ), "Result should mention London"  # nosec B101
+                assert any(
+                    indicator in result_str
+                    for indicator in ["forecast", "days", "weather", "°c"]
+                ), "Result should contain forecast information"  # nosec B101
+
+            # Ensure we tested at least one tool
+            if not weather_tool and not forecast_tool:
+                pytest.fail(
+                    "Expected to find get_weather or get_forecast tools in MCP server"
+                )
+
+            print(
+                f"\nSuccessfully tested {len([t for t in [weather_tool, forecast_tool] if t])} weather tools"
+            )
 
         except Exception as e:
-            pytest.fail(f"Failed to call tool on MCP server: {e}")
+            pytest.fail(f"Failed to call tools on MCP server: {e}")
 
         finally:
             await simple_client.disconnect()

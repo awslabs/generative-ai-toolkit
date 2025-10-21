@@ -26,6 +26,12 @@ from simple_auth import SimpleAuth
 
 logger = logging.getLogger(__name__)
 
+# Suppress expected warnings during cleanup
+logging.getLogger("httpx").setLevel(logging.WARNING)  # HTTP 404s during cleanup
+logging.getLogger("asyncio").setLevel(
+    logging.CRITICAL
+)  # Library-level async cleanup issues
+
 
 class SimpleMcpClient:
     """Simple MCP client for AgentCore Runtime with OAuth authentication."""
@@ -80,6 +86,7 @@ class SimpleMcpClient:
             Exception: When authentication or connection fails
         """
         try:
+
             logger.info(
                 f"Connecting to AgentCore Runtime MCP server: {self.runtime_arn}"
             )
@@ -138,7 +145,10 @@ class SimpleMcpClient:
             try:
                 await self._session_context.__aexit__(None, None, None)
             except Exception as e:
-                logger.warning(f"Error closing MCP session: {e}")
+                # Only log unexpected errors (404s and cancel scope errors are expected during cleanup)
+                error_msg = str(e).lower()
+                if "404" not in error_msg and "cancel scope" not in error_msg:
+                    logger.warning(f"Error closing MCP session: {e}")
             finally:
                 self._session = None
                 self._session_context = None
@@ -148,7 +158,10 @@ class SimpleMcpClient:
             try:
                 await self._transport_context.__aexit__(None, None, None)
             except Exception as e:
-                logger.warning(f"Error closing transport: {e}")
+                # Only log unexpected errors (404s and cancel scope errors are expected during cleanup)
+                error_msg = str(e).lower()
+                if "404" not in error_msg and "cancel scope" not in error_msg:
+                    logger.warning(f"Error closing transport: {e}")
             finally:
                 self._transport_context = None
 

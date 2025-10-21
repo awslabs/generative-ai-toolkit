@@ -17,18 +17,17 @@ Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 
 # nosec B101
 
-import importlib
 import os
-import sys
+import textwrap
 
+import agent
 import pytest
 
-
-def import_agent_fresh():
-    """Import agent module with fresh state."""
-    if "agent" in sys.modules:
-        del sys.modules["agent"]
-    return importlib.import_module("agent")
+from generative_ai_toolkit.evaluate.interactive import GenerativeAIToolkit
+from generative_ai_toolkit.metrics.modules.conversation import (
+    ConversationExpectationMetric,
+)
+from generative_ai_toolkit.test import Case
 
 
 class TestAgentLocalIntegration:
@@ -37,8 +36,6 @@ class TestAgentLocalIntegration:
     @pytest.mark.integration
     def test_agent_basic_functionality(self):
         """Test basic agent functionality with real Bedrock calls."""
-
-        agent = import_agent_fresh()
 
         payload = {
             "input": {"prompt": "Hello! Please introduce yourself briefly."},
@@ -55,61 +52,89 @@ class TestAgentLocalIntegration:
             # Should contain some indication it's a weather assistant
             result_lower = result["result"].lower()
             weather_indicators = ["weather", "assistant", "help", "information"]
-            assert any(indicator in result_lower for indicator in weather_indicators)  # nosec B101
+            assert any(
+                indicator in result_lower for indicator in weather_indicators
+            )  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Agent invocation failed: {e}")
 
     @pytest.mark.integration
     def test_agent_with_mcp_weather_tools(self):
-        """Test agent with MCP weather tools (requires deployed MCP server)."""
+        """Test agent with MCP weather tools using Case with Overall Conversation Expectations."""
 
-        agent = import_agent_fresh()
+        # Create a Case with overall conversation expectations
+        weather_case = Case(
+            name="Weather query with MCP tools",
+            user_inputs=[
+                "What's the current weather in Amsterdam? Please use your weather tools."
+            ],
+            overall_expectations=textwrap.dedent(
+                """
+                The agent should:
+                1. Recognize the user's request for weather information about Amsterdam
+                2. Use the available MCP weather tools (get_weather) to retrieve current weather data
+                3. Provide a helpful response that includes:
+                   - Mention of Amsterdam as the requested city
+                   - Weather information (temperature, conditions, etc.) obtained from the tools
+                   - A natural, conversational response format
+                4. If tools are unavailable, handle the error gracefully with an appropriate message
 
-        payload = {
-            "input": {
-                "prompt": "What's the current weather in Amsterdam? Please use your weather tools."
-            },
-            "sessionId": "mcp-weather-test",
-        }
+                The conversation should demonstrate successful integration between the agent and MCP server.
+                """
+            ),
+        )
 
         try:
-            result = agent.invoke(payload)
+            # Run the case directly against the BedrockConverseAgent
+            traces = weather_case.run(agent.bedrock_agent)
 
-            assert "result" in result  # nosec B101
-            assert len(result["result"]) > 0  # nosec B101
+            # Evaluate using ConversationExpectationMetric
+            results = GenerativeAIToolkit.eval(
+                metrics=[ConversationExpectationMetric()], traces=[traces]
+            )
 
-            result_lower = result["result"].lower()
+            # Check evaluation results
+            evaluation_results = list(results)
+            assert (
+                len(evaluation_results) > 0
+            ), "Expected evaluation results from ConversationExpectationMetric"  # nosec B101
+            conversation_result = evaluation_results[0]
 
-            # Should mention Amsterdam
-            assert "amsterdam" in result_lower  # nosec B101
+            # Verify we have measurements
+            assert (
+                len(conversation_result.measurements) > 0
+            ), "Expected conversation measurements"  # nosec B101
 
-            # Should contain weather information or appropriate error handling
-            weather_indicators = [
-                "temperature",
-                "weather",
-                "degrees",
-                "conditions",
-                "celsius",
-                "fahrenheit",
-                "sunny",
-                "cloudy",
-                "rain",
+            # Check if the evaluation passed (score >= 7 is generally good)
+            correctness_measurements = [
+                m for m in conversation_result.measurements if "Correctness" in m.name
             ]
-            error_indicators = ["sorry", "unable", "error", "unavailable"]
 
-            has_weather_data = any(
-                indicator in result_lower for indicator in weather_indicators
-            )
-            has_error_handling = any(
-                indicator in result_lower for indicator in error_indicators
-            )
+            if correctness_measurements:
+                score = correctness_measurements[0].value
+                print(f"\n✅ Correctness Score: {score}/10")
+                assert (
+                    score >= 7
+                ), f"Expected correctness score >= 7, got {score}"  # nosec B101
 
-            # Should either provide weather data or handle errors gracefully
-            assert has_weather_data or has_error_handling  # nosec B101
+            # Verify the agent actually used weather tools by checking traces
+            tool_traces = [
+                trace
+                for trace in conversation_result.traces
+                if hasattr(trace, "trace")
+                and "get_weather" in str(trace.trace.attributes.get("ai.tool.name", ""))
+            ]
+
+            assert (
+                len(tool_traces) > 0
+            ), "Expected agent to use weather tools"  # nosec B101
+            print(
+                f"✅ Weather tool was used successfully ({len(tool_traces)} tool calls)"
+            )
 
         except Exception as e:
-            pytest.fail(f"Agent invocation failed: {e}")
+            pytest.fail(f"Case-based evaluation failed: {e}")
 
     @pytest.mark.integration
     def test_agent_error_handling(self):
@@ -124,7 +149,6 @@ class TestAgentLocalIntegration:
         os.environ["BEDROCK_MODEL_ID"] = "invalid-model-id"
 
         try:
-            agent = import_agent_fresh()
 
             payload = {"input": {"prompt": "Test prompt"}, "sessionId": "error-test"}
 
@@ -150,8 +174,6 @@ class TestAgentLocalIntegration:
     def test_agent_session_handling(self):
         """Test agent with multiple calls in different sessions."""
 
-        agent = import_agent_fresh()
-
         # Test multiple sessions
         sessions = [
             {"input": {"prompt": "Hello, I'm user 1"}, "sessionId": "session-1"},
@@ -171,4 +193,6 @@ class TestAgentLocalIntegration:
         assert len(results) == len(sessions)  # nosec B101
         for i, result in enumerate(results):
             assert "result" in result, f"Session {i + 1} missing result"  # nosec B101
-            assert len(result["result"]) > 0, f"Session {i + 1} empty result"  # nosec B101
+            assert (
+                len(result["result"]) > 0
+            ), f"Session {i + 1} empty result"  # nosec B101
