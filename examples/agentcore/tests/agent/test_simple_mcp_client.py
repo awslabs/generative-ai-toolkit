@@ -5,6 +5,8 @@ This module tests the simplified MCP client with OAuth Bearer token authenticati
 using real AgentCore Runtime MCP servers and deployed infrastructure.
 """
 
+# nosec B101
+
 import os
 
 import pytest
@@ -22,14 +24,14 @@ class TestSimpleMcpClientIntegration:
     def test_client_initialization_with_real_arn(self, simple_client):
         """Test client initialization with real AgentCore Runtime ARN."""
         mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
-        assert simple_client.runtime_arn == mcp_server_runtime_arn
-        assert simple_client.region in mcp_server_runtime_arn
-        assert not simple_client.is_connected()
+        assert simple_client.runtime_arn == mcp_server_runtime_arn  # nosec B101
+        assert simple_client.region in mcp_server_runtime_arn  # nosec B101
+        assert not simple_client.is_connected()  # nosec B101
 
         # Verify MCP URL construction
-        assert "bedrock-agentcore" in simple_client.mcp_url
-        assert simple_client.region in simple_client.mcp_url
-        assert "invocations?qualifier=DEFAULT" in simple_client.mcp_url
+        assert "bedrock-agentcore" in simple_client.mcp_url  # nosec B101
+        assert simple_client.region in simple_client.mcp_url  # nosec B101
+        assert "invocations?qualifier=DEFAULT" in simple_client.mcp_url  # nosec B101
 
     @pytest.mark.asyncio
     async def test_full_connection_to_agentcore_mcp_server(self, simple_client):
@@ -39,7 +41,7 @@ class TestSimpleMcpClientIntegration:
             await simple_client.connect()
 
             # Verify connection
-            assert simple_client.is_connected()
+            assert simple_client.is_connected()  # nosec B101
 
         except Exception as e:
             # Log the error details for debugging
@@ -67,8 +69,8 @@ class TestSimpleMcpClientIntegration:
             tools_result = await simple_client.list_tools()
 
             # Verify we got tools
-            assert hasattr(tools_result, "tools"), "Expected tools in response"
-            assert len(tools_result.tools) > 0, "Expected at least one tool"
+            assert hasattr(tools_result, "tools"), "Expected tools in response"  # nosec B101
+            assert len(tools_result.tools) > 0, "Expected at least one tool"  # nosec B101
 
             # Log available tools for debugging
             print(f"\nFound {len(tools_result.tools)} tools:")
@@ -77,9 +79,9 @@ class TestSimpleMcpClientIntegration:
 
             # Verify tool structure
             first_tool = tools_result.tools[0]
-            assert hasattr(first_tool, "name"), "Tool should have name"
-            assert hasattr(first_tool, "description"), "Tool should have description"
-            assert hasattr(first_tool, "inputSchema"), "Tool should have input schema"
+            assert hasattr(first_tool, "name"), "Tool should have name"  # nosec B101
+            assert hasattr(first_tool, "description"), "Tool should have description"  # nosec B101
+            assert hasattr(first_tool, "inputSchema"), "Tool should have input schema"  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Failed to list tools from MCP server: {e}")
@@ -138,7 +140,7 @@ class TestSimpleMcpClientIntegration:
                     result = await simple_client.call_tool(test_tool.name, {})
 
                 # Verify we got a result
-                assert result is not None, "Tool should return a result"
+                assert result is not None, "Tool should return a result"  # nosec B101
                 print(f"Tool result: {result}")
 
             except Exception as tool_error:
@@ -160,14 +162,14 @@ class TestSimpleMcpClientIntegration:
             # Use as context manager
             async with simple_client as client:
                 # Verify connection
-                assert client.is_connected()
+                assert client.is_connected()  # nosec B101
 
                 # List tools to verify functionality
                 tools_result = await client.list_tools()
-                assert len(tools_result.tools) > 0
+                assert len(tools_result.tools) > 0  # nosec B101
 
             # Verify disconnection after context exit
-            assert not simple_client.is_connected()
+            assert not simple_client.is_connected()  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Context manager test failed: {e}")
@@ -180,11 +182,11 @@ class TestSimpleMcpClientIntegration:
             await simple_client.connect()
 
             # If we get here, configuration was loaded successfully
-            assert simple_client.auth is not None
+            assert simple_client.auth is not None  # nosec B101
 
             # Verify we can list tools (proves authentication worked)
             tools_result = await simple_client.list_tools()
-            assert len(tools_result.tools) > 0
+            assert len(tools_result.tools) > 0  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Automatic configuration loading failed: {e}")

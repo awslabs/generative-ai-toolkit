@@ -1,5 +1,7 @@
 """Tests for deployed MCP server tool schema validation."""
 
+# nosec B101
+
 import json
 import os
 import sys
@@ -35,15 +37,15 @@ class TestMcpServerDeployment:
             tools_result = await mcp_client.list_tools()
 
             # Verify we got a valid response
-            assert tools_result is not None
-            assert hasattr(tools_result, "tools")
-            assert isinstance(tools_result.tools, list)
+            assert tools_result is not None  # nosec B101
+            assert hasattr(tools_result, "tools")  # nosec B101
+            assert isinstance(tools_result.tools, list)  # nosec B101
 
             # Verify we have the expected weather tools
             tool_names = [tool.name for tool in tools_result.tools]
-            assert "get_weather" in tool_names
-            assert "get_forecast" in tool_names
-            assert len(tools_result.tools) == 2
+            assert "get_weather" in tool_names  # nosec B101
+            assert "get_forecast" in tool_names  # nosec B101
+            assert len(tools_result.tools) == 2  # nosec B101
 
     @pytest.mark.asyncio
     async def test_mcp_server_returns_weather_tools(self, cdk_outputs):
@@ -52,11 +54,11 @@ class TestMcpServerDeployment:
 
         # Verify we have the expected tools
         tool_names = [tool.name for tool in tools]
-        assert "get_weather" in tool_names
-        assert "get_forecast" in tool_names
+        assert "get_weather" in tool_names  # nosec B101
+        assert "get_forecast" in tool_names  # nosec B101
 
         # Verify we have exactly 2 tools
-        assert len(tools) == 2
+        assert len(tools) == 2  # nosec B101
 
     @pytest.mark.asyncio
     async def test_weather_tool_json_schema_structure(self, cdk_outputs):
@@ -70,29 +72,29 @@ class TestMcpServerDeployment:
                 weather_tool = tool
                 break
 
-        assert weather_tool is not None, "get_weather tool not found"
+        assert weather_tool is not None, "get_weather tool not found"  # nosec B101
 
         # Verify tool structure
-        assert hasattr(weather_tool, "name")
-        assert hasattr(weather_tool, "description")
-        assert hasattr(weather_tool, "inputSchema")
+        assert hasattr(weather_tool, "name")  # nosec B101
+        assert hasattr(weather_tool, "description")  # nosec B101
+        assert hasattr(weather_tool, "inputSchema")  # nosec B101
 
         # Verify the inputSchema is a proper JSON schema
         schema = weather_tool.inputSchema
-        assert isinstance(schema, dict)
-        assert "type" in schema
-        assert schema["type"] == "object"
-        assert "properties" in schema
-        assert "required" in schema
+        assert isinstance(schema, dict)  # nosec B101
+        assert "type" in schema  # nosec B101
+        assert schema["type"] == "object"  # nosec B101
+        assert "properties" in schema  # nosec B101
+        assert "required" in schema  # nosec B101
 
         # Verify request parameter exists (Pydantic model parameter)
-        assert "request" in schema["properties"]
+        assert "request" in schema["properties"]  # nosec B101
         request_prop = schema["properties"]["request"]
 
         # The request should reference a Pydantic model definition
         if "$ref" in request_prop:
             # Schema uses $ref to reference model definition
-            assert "$defs" in schema or "definitions" in schema
+            assert "$defs" in schema or "definitions" in schema  # nosec B101
             # Find the referenced model in definitions
             ref_path = request_prop["$ref"]
             if ref_path.startswith("#/$defs/"):
@@ -107,21 +109,21 @@ class TestMcpServerDeployment:
             # Schema has model definition inline
             model_def = request_prop
 
-        assert model_def["type"] == "object"
-        assert "properties" in model_def
-        assert "required" in model_def
+        assert model_def["type"] == "object"  # nosec B101
+        assert "properties" in model_def  # nosec B101
+        assert "required" in model_def  # nosec B101
 
         # Verify city property exists within the model
-        assert "city" in model_def["properties"]
+        assert "city" in model_def["properties"]  # nosec B101
         city_prop = model_def["properties"]["city"]
-        assert city_prop["type"] == "string"
-        assert "description" in city_prop
-        assert "minLength" in city_prop
-        assert "maxLength" in city_prop
+        assert city_prop["type"] == "string"  # nosec B101
+        assert "description" in city_prop  # nosec B101
+        assert "minLength" in city_prop  # nosec B101
+        assert "maxLength" in city_prop  # nosec B101
 
         # Verify required fields
-        assert "request" in schema["required"]
-        assert "city" in model_def["required"]
+        assert "request" in schema["required"]  # nosec B101
+        assert "city" in model_def["required"]  # nosec B101
 
     @pytest.mark.asyncio
     async def test_forecast_tool_json_schema_structure(self, cdk_outputs):
@@ -135,29 +137,29 @@ class TestMcpServerDeployment:
                 forecast_tool = tool
                 break
 
-        assert forecast_tool is not None, "get_forecast tool not found"
+        assert forecast_tool is not None, "get_forecast tool not found"  # nosec B101
 
         # Verify tool structure
-        assert hasattr(forecast_tool, "name")
-        assert hasattr(forecast_tool, "description")
-        assert hasattr(forecast_tool, "inputSchema")
+        assert hasattr(forecast_tool, "name")  # nosec B101
+        assert hasattr(forecast_tool, "description")  # nosec B101
+        assert hasattr(forecast_tool, "inputSchema")  # nosec B101
 
         # Verify the inputSchema is a proper JSON schema
         schema = forecast_tool.inputSchema
-        assert isinstance(schema, dict)
-        assert "type" in schema
-        assert schema["type"] == "object"
-        assert "properties" in schema
-        assert "required" in schema
+        assert isinstance(schema, dict)  # nosec B101
+        assert "type" in schema  # nosec B101
+        assert schema["type"] == "object"  # nosec B101
+        assert "properties" in schema  # nosec B101
+        assert "required" in schema  # nosec B101
 
         # Verify request parameter exists (Pydantic model parameter)
-        assert "request" in schema["properties"]
+        assert "request" in schema["properties"]  # nosec B101
         request_prop = schema["properties"]["request"]
 
         # The request should reference a Pydantic model definition
         if "$ref" in request_prop:
             # Schema uses $ref to reference model definition
-            assert "$defs" in schema or "definitions" in schema
+            assert "$defs" in schema or "definitions" in schema  # nosec B101
             # Find the referenced model in definitions
             ref_path = request_prop["$ref"]
             if ref_path.startswith("#/$defs/"):
@@ -172,29 +174,29 @@ class TestMcpServerDeployment:
             # Schema has model definition inline
             model_def = request_prop
 
-        assert model_def["type"] == "object"
-        assert "properties" in model_def
-        assert "required" in model_def
+        assert model_def["type"] == "object"  # nosec B101
+        assert "properties" in model_def  # nosec B101
+        assert "required" in model_def  # nosec B101
 
         # Verify city property within the model
-        assert "city" in model_def["properties"]
+        assert "city" in model_def["properties"]  # nosec B101
         city_prop = model_def["properties"]["city"]
-        assert city_prop["type"] == "string"
-        assert "description" in city_prop
+        assert city_prop["type"] == "string"  # nosec B101
+        assert "description" in city_prop  # nosec B101
 
         # Verify days property within the model
-        assert "days" in model_def["properties"]
+        assert "days" in model_def["properties"]  # nosec B101
         days_prop = model_def["properties"]["days"]
-        assert days_prop["type"] == "integer"
-        assert "default" in days_prop
-        assert days_prop["default"] == 3
-        assert "minimum" in days_prop
-        assert "maximum" in days_prop
+        assert days_prop["type"] == "integer"  # nosec B101
+        assert "default" in days_prop  # nosec B101
+        assert days_prop["default"] == 3  # nosec B101
+        assert "minimum" in days_prop  # nosec B101
+        assert "maximum" in days_prop  # nosec B101
 
         # Verify required fields (request is required, within model only city is required)
-        assert "request" in schema["required"]
-        assert "city" in model_def["required"]
-        assert "days" not in model_def["required"]
+        assert "request" in schema["required"]  # nosec B101
+        assert "city" in model_def["required"]  # nosec B101
+        assert "days" not in model_def["required"]  # nosec B101
 
     @pytest.mark.asyncio
     async def test_tool_schemas_are_valid_json(self, cdk_outputs):
@@ -208,11 +210,11 @@ class TestMcpServerDeployment:
             # Test JSON serialization/deserialization
             schema_json = json.dumps(schema)
             parsed_schema = json.loads(schema_json)
-            assert parsed_schema == schema
+            assert parsed_schema == schema  # nosec B101
 
             # Verify schema has required JSON Schema fields
-            assert "type" in schema
-            assert (
+            assert "type" in schema  # nosec B101
+            assert (  # nosec B101
                 "properties" in schema
                 or "items" in schema
                 or schema["type"] in ["string", "number", "boolean"]
@@ -225,14 +227,14 @@ class TestMcpServerDeployment:
 
         # Verify each tool has a meaningful description
         for tool in tools:
-            assert hasattr(tool, "description")
+            assert hasattr(tool, "description")  # nosec B101
             description = tool.description
-            assert isinstance(description, str)
-            assert len(description.strip()) > 10  # Meaningful description
+            assert isinstance(description, str)  # nosec B101
+            assert len(description.strip()) > 10  # Meaningful description  # nosec B101
 
             # Verify descriptions contain usage guidance
             description_lower = description.lower()
-            assert any(
+            assert any(  # nosec B101
                 keyword in description_lower
                 for keyword in ["use", "tool", "when", "example", "get"]
             )
@@ -246,7 +248,7 @@ class TestMcpServerDeployment:
         weather_tool = next(
             (tool for tool in tools if tool.name == "get_weather"), None
         )
-        assert weather_tool is not None
+        assert weather_tool is not None  # nosec B101
 
         # Get the model definition (handle $ref or inline)
         weather_request_schema = weather_tool.inputSchema["properties"]["request"]
@@ -264,16 +266,16 @@ class TestMcpServerDeployment:
         city_prop = weather_model_def["properties"]["city"]
 
         # Verify Pydantic Field validation rules are preserved
-        assert city_prop["minLength"] == 1
-        assert city_prop["maxLength"] == 100
-        assert "description" in city_prop
-        assert len(city_prop["description"]) > 0
+        assert city_prop["minLength"] == 1  # nosec B101
+        assert city_prop["maxLength"] == 100  # nosec B101
+        assert "description" in city_prop  # nosec B101
+        assert len(city_prop["description"]) > 0  # nosec B101
 
         # Test forecast tool validation rules
         forecast_tool = next(
             (tool for tool in tools if tool.name == "get_forecast"), None
         )
-        assert forecast_tool is not None
+        assert forecast_tool is not None  # nosec B101
 
         # Get the model definition (handle $ref or inline)
         forecast_request_schema = forecast_tool.inputSchema["properties"]["request"]
@@ -293,11 +295,11 @@ class TestMcpServerDeployment:
         days_prop = forecast_model_def["properties"]["days"]
 
         # Verify Pydantic Field validation rules for days
-        assert days_prop["minimum"] == 1
-        assert days_prop["maximum"] == 7
-        assert days_prop["default"] == 3
-        assert "description" in days_prop
-        assert len(days_prop["description"]) > 0
+        assert days_prop["minimum"] == 1  # nosec B101
+        assert days_prop["maximum"] == 7  # nosec B101
+        assert days_prop["default"] == 3  # nosec B101
+        assert "description" in days_prop  # nosec B101
+        assert len(days_prop["description"]) > 0  # nosec B101
 
     @pytest.mark.asyncio
     async def test_pydantic_model_titles_and_descriptions(self, cdk_outputs):
@@ -322,16 +324,16 @@ class TestMcpServerDeployment:
                 model_def = request_schema
 
             # Verify Pydantic model has title
-            assert "title" in model_def
-            assert isinstance(model_def["title"], str)
-            assert len(model_def["title"]) > 0
+            assert "title" in model_def  # nosec B101
+            assert isinstance(model_def["title"], str)  # nosec B101
+            assert len(model_def["title"]) > 0  # nosec B101
 
             # Verify Pydantic model has description with examples
             if "description" in model_def:
                 description = model_def["description"]
-                assert isinstance(description, str)
+                assert isinstance(description, str)  # nosec B101
                 # Should contain usage examples from our Pydantic model docstrings
-                assert any(
+                assert any(  # nosec B101
                     keyword in description.lower()
                     for keyword in ["example", "use", "when"]
                 )

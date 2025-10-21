@@ -1,5 +1,7 @@
 """Basic deployment verification tests for the AgentCore agent."""
 
+# nosec B101 - Assert statements are standard in pytest test files
+
 import os
 
 import pytest
@@ -19,8 +21,8 @@ class TestAgentDeployment:
             response = bedrock_agentcore_control_client.get_agent_runtime(
                 agentRuntimeId=runtime_id
             )
-            assert response["agentRuntimeId"] == runtime_id
-            assert response["status"] in ["READY", "CREATING", "UPDATING"]
+            assert response["agentRuntimeId"] == runtime_id  # nosec B101
+            assert response["status"] in ["READY", "CREATING", "UPDATING"]  # nosec B101
         except ClientError as e:
             pytest.fail(f"Failed to get agent runtime: {e}")
 
@@ -37,8 +39,8 @@ class TestAgentDeployment:
             response = bedrock_agentcore_control_client.get_agent_runtime_endpoint(
                 agentRuntimeId=runtime_id, endpointName=endpoint_name
             )
-            assert response["name"] == endpoint_name
-            assert runtime_id in response["agentRuntimeArn"]
-            assert response["status"] in ["READY", "CREATING", "UPDATING"]
+            assert response["name"] == endpoint_name  # nosec B101
+            assert runtime_id in response["agentRuntimeArn"]  # nosec B101
+            assert response["status"] in ["READY", "CREATING", "UPDATING"]  # nosec B101
         except ClientError as e:
             pytest.fail(f"Failed to get agent runtime endpoint: {e}")

@@ -8,8 +8,12 @@ This test suite serves as documentation and examples for:
 - Response handling
 - Session management
 
+Note: This file uses assert statements for test validation (B101 suppressed)  # nosec B101
+
 These tests demonstrate the agent's capabilities rather than exhaustively testing edge cases.
 """
+
+# nosec B101
 
 import json
 import os
@@ -43,9 +47,9 @@ class TestAgentExamples:
             response_data = json.loads(response_body)
 
             # Verify response structure
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             print(f"Agent response: {result}")
 
@@ -70,17 +74,17 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             # Verify weather information is provided
             result_lower = result.lower()
-            assert "amsterdam" in result_lower
+            assert "amsterdam" in result_lower  # nosec B101
 
             # Should contain weather-related information
             weather_indicators = ["temperature", "weather", "degrees", "conditions"]
-            assert any(indicator in result_lower for indicator in weather_indicators)
+            assert any(indicator in result_lower for indicator in weather_indicators)  # nosec B101
 
             print(f"Weather response: {result}")
 
@@ -107,16 +111,16 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             result_lower = result.lower()
-            assert "london" in result_lower
+            assert "london" in result_lower  # nosec B101
 
             # Should contain forecast information
             forecast_indicators = ["forecast", "days", "tomorrow", "weather"]
-            assert any(indicator in result_lower for indicator in forecast_indicators)
+            assert any(indicator in result_lower for indicator in forecast_indicators)  # nosec B101
 
             print(f"Forecast response: {result}")
 
@@ -143,19 +147,19 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             result_lower = result.lower()
 
             # Should mention both cities
-            assert "paris" in result_lower
-            assert "berlin" in result_lower
+            assert "paris" in result_lower  # nosec B101
+            assert "berlin" in result_lower  # nosec B101
 
             # Should contain comparison language
             comparison_indicators = ["compare", "better", "warmer", "cooler", "both"]
-            assert any(indicator in result_lower for indicator in comparison_indicators)
+            assert any(indicator in result_lower for indicator in comparison_indicators)  # nosec B101
 
             print(f"Comparison response: {result}")
 
@@ -180,7 +184,7 @@ class TestAgentExamples:
 
             response_body1 = response1["response"].read().decode("utf-8")
             response_data1 = json.loads(response_body1)
-            assert "result" in response_data1
+            assert "result" in response_data1  # nosec B101
 
             print(f"First response: {response_data1['result']}")
 
@@ -201,14 +205,14 @@ class TestAgentExamples:
 
             response_body2 = response2["response"].read().decode("utf-8")
             response_data2 = json.loads(response_body2)
-            assert "result" in response_data2
+            assert "result" in response_data2  # nosec B101
 
             result2 = response_data2["result"]
             result2_lower = result2.lower()
 
             # Should handle the follow-up appropriately
             context_indicators = ["tokyo", "forecast", "tomorrow", "same"]
-            assert any(indicator in result2_lower for indicator in context_indicators)
+            assert any(indicator in result2_lower for indicator in context_indicators)  # nosec B101
 
             print(f"Follow-up response: {result2}")
 
@@ -248,9 +252,9 @@ class TestAgentExamples:
                 response_body = response["response"].read().decode("utf-8")
                 response_data = json.loads(response_body)
 
-                assert "result" in response_data
+                assert "result" in response_data  # nosec B101
                 result = response_data["result"]
-                assert len(result) > 0
+                assert len(result) > 0  # nosec B101
 
                 print(f"Payload structure {i + 1} response: {result}")
 
@@ -275,9 +279,9 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             # Agent should handle the error gracefully
             print(f"Error handling response: {result}")
@@ -305,16 +309,16 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             response_time = end_time - start_time
             print(f"Response time: {response_time:.2f} seconds")
             print(f"Response: {result}")
 
             # Should respond within reasonable time
-            assert response_time < 30.0
+            assert response_time < 30.0  # nosec B101
 
         except ClientError as e:
             pytest.fail(f"Failed performance test ({e.response['Error']['Code']}): {e}")
@@ -335,9 +339,9 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             print(f"Non-weather query response: {result}")
 
@@ -366,9 +370,9 @@ class TestAgentExamples:
             response_body = response["response"].read().decode("utf-8")
             response_data = json.loads(response_body)
 
-            assert "result" in response_data
+            assert "result" in response_data  # nosec B101
             result = response_data["result"]
-            assert len(result) > 0
+            assert len(result) > 0  # nosec B101
 
             # Should mention weather capabilities
             result_lower = result.lower()
@@ -379,7 +383,7 @@ class TestAgentExamples:
                 "provide",
                 "check",
             ]
-            assert any(indicator in result_lower for indicator in capability_indicators)
+            assert any(indicator in result_lower for indicator in capability_indicators)  # nosec B101
 
             print(f"Capabilities response: {result}")
 

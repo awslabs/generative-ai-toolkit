@@ -15,6 +15,8 @@ Prerequisites:
 Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 """
 
+# nosec B101
+
 import importlib
 import os
 import sys
@@ -46,14 +48,14 @@ class TestAgentLocalIntegration:
         try:
             result = agent.invoke(payload)
 
-            assert "result" in result
-            assert len(result["result"]) > 0
-            assert isinstance(result["result"], str)
+            assert "result" in result  # nosec B101
+            assert len(result["result"]) > 0  # nosec B101
+            assert isinstance(result["result"], str)  # nosec B101
 
             # Should contain some indication it's a weather assistant
             result_lower = result["result"].lower()
             weather_indicators = ["weather", "assistant", "help", "information"]
-            assert any(indicator in result_lower for indicator in weather_indicators)
+            assert any(indicator in result_lower for indicator in weather_indicators)  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Agent invocation failed: {e}")
@@ -74,13 +76,13 @@ class TestAgentLocalIntegration:
         try:
             result = agent.invoke(payload)
 
-            assert "result" in result
-            assert len(result["result"]) > 0
+            assert "result" in result  # nosec B101
+            assert len(result["result"]) > 0  # nosec B101
 
             result_lower = result["result"].lower()
 
             # Should mention Amsterdam
-            assert "amsterdam" in result_lower
+            assert "amsterdam" in result_lower  # nosec B101
 
             # Should contain weather information or appropriate error handling
             weather_indicators = [
@@ -104,7 +106,7 @@ class TestAgentLocalIntegration:
             )
 
             # Should either provide weather data or handle errors gracefully
-            assert has_weather_data or has_error_handling
+            assert has_weather_data or has_error_handling  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Agent invocation failed: {e}")
@@ -129,11 +131,11 @@ class TestAgentLocalIntegration:
             result = agent.invoke(payload)
 
             # Should handle error gracefully and return error message
-            assert "result" in result
+            assert "result" in result  # nosec B101
             result_text = result["result"].lower()
 
             # Check for the specific error message format returned by the agent
-            assert (
+            assert (  # nosec B101
                 "model configuration error" in result_text
                 or "is not available" in result_text
                 or "invalid-model-id" in result_text
@@ -166,7 +168,7 @@ class TestAgentLocalIntegration:
                 pytest.fail(f"Agent invocation failed for session: {e}")
 
         # All calls should succeed
-        assert len(results) == len(sessions)
+        assert len(results) == len(sessions)  # nosec B101
         for i, result in enumerate(results):
-            assert "result" in result, f"Session {i + 1} missing result"
-            assert len(result["result"]) > 0, f"Session {i + 1} empty result"
+            assert "result" in result, f"Session {i + 1} missing result"  # nosec B101
+            assert len(result["result"]) > 0, f"Session {i + 1} empty result"  # nosec B101

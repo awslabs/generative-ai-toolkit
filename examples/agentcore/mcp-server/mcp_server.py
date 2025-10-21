@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 logger.info("MCP Server starting")
 
 # Create FastMCP server with correct configuration for AgentCore Runtime
-mcp = FastMCP(host="0.0.0.0", stateless_http=True)
+mcp = FastMCP(
+    host="0.0.0.0", stateless_http=True
+)  # nosec B104 - Binding to all interfaces required for AgentCore Runtime container networking
 
 # Register weather tools from separate modules
 register_get_weather_tool(mcp)

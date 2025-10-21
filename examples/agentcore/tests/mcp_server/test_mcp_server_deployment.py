@@ -1,5 +1,7 @@
 """Test the deployed AgentCore MCP server deployment and basic protocol functionality."""
 
+# nosec B101
+
 import asyncio
 import os
 from urllib.parse import quote
@@ -26,13 +28,13 @@ class TestMcpServerDeployment:
         mcp_url = _construct_mcp_endpoint_url(mcp_server_runtime_arn)
 
         # Verify URL structure
-        assert "https://bedrock-agentcore." in mcp_url
-        assert ".amazonaws.com/runtimes/" in mcp_url
-        assert "invocations?qualifier=DEFAULT" in mcp_url
+        assert "https://bedrock-agentcore." in mcp_url  # nosec B101
+        assert ".amazonaws.com/runtimes/" in mcp_url  # nosec B101
+        assert "invocations?qualifier=DEFAULT" in mcp_url  # nosec B101
 
         # Verify region is extracted correctly
         region = mcp_server_runtime_arn.split(":")[3]
-        assert region in mcp_url
+        assert region in mcp_url  # nosec B101
 
         print(f"✅ MCP endpoint URL constructed: {mcp_url}")
 
@@ -45,9 +47,9 @@ class TestMcpServerDeployment:
             response = bedrock_agentcore_control_client.get_agent_runtime(
                 agentRuntimeId=runtime_id
             )
-            assert response["agentRuntimeId"] == runtime_id
-            assert response["status"] in ["READY", "CREATING", "UPDATING"]
-            assert response["protocolConfiguration"]["serverProtocol"] == "MCP"
+            assert response["agentRuntimeId"] == runtime_id  # nosec B101
+            assert response["status"] in ["READY", "CREATING", "UPDATING"]  # nosec B101
+            assert response["protocolConfiguration"]["serverProtocol"] == "MCP"  # nosec B101
         except ClientError as e:
             pytest.fail(f"Failed to get MCP server runtime: {e}")
 
@@ -62,9 +64,9 @@ class TestMcpServerDeployment:
             response = bedrock_agentcore_control_client.get_agent_runtime_endpoint(
                 agentRuntimeId=runtime_id, endpointName=endpoint_name
             )
-            assert response["name"] == endpoint_name
-            assert runtime_id in response["agentRuntimeArn"]
-            assert response["status"] in ["READY", "CREATING", "UPDATING"]
+            assert response["name"] == endpoint_name  # nosec B101
+            assert runtime_id in response["agentRuntimeArn"]  # nosec B101
+            assert response["status"] in ["READY", "CREATING", "UPDATING"]  # nosec B101
         except ClientError as e:
             pytest.fail(f"Failed to get MCP server runtime endpoint: {e}")
 
@@ -176,7 +178,7 @@ class TestMcpServerDeployment:
                     raise
 
             # Verify we got the expected authentication error
-            assert auth_error_received, (
+            assert auth_error_received, (  # nosec B101
                 "Expected authentication error when connecting without credentials. "
                 "MCP server should reject unauthenticated requests."
             )

@@ -5,6 +5,8 @@ Tests SimpleAuth with real AWS Cognito services.
 These tests require a deployed CDK stack with Cognito configuration.
 """
 
+# nosec B101
+
 import json
 import os
 from dataclasses import dataclass
@@ -52,8 +54,8 @@ class TestSimpleAuthIntegration:
 
     def test_simple_auth_initialization(self, simple_auth):
         """Test SimpleAuth initialization."""
-        assert simple_auth.region is not None
-        assert simple_auth.cognito_client is not None
+        assert simple_auth.region is not None  # nosec B101
+        assert simple_auth.cognito_client is not None  # nosec B101
 
     def test_get_bearer_token_with_valid_credentials(
         self, simple_auth, cognito_config, credentials
@@ -70,13 +72,13 @@ class TestSimpleAuthIntegration:
             )
 
             # Verify we got a token
-            assert token is not None
-            assert isinstance(token, str)
-            assert len(token) > 0
+            assert token is not None  # nosec B101
+            assert isinstance(token, str)  # nosec B101
+            assert len(token) > 0  # nosec B101
 
             # Basic JWT token format check (should have 3 parts separated by dots)
             token_parts = token.split(".")
-            assert len(token_parts) == 3, "Bearer token should be a valid JWT"
+            assert len(token_parts) == 3, "Bearer token should be a valid JWT"  # nosec B101
 
             print(f"✅ Successfully obtained Bearer token (length: {len(token)})")
 
@@ -94,12 +96,12 @@ class TestSimpleAuthIntegration:
                 user_pool_id=user_pool_id,
                 client_id=client_id,
                 username="invalid_user",
-                password="invalid_password",
+                password="invalid_password",  # nosec B106 - Test credential for auth failure testing
             )
 
         # Verify the error message indicates invalid credentials
         error_message = str(exc_info.value).lower()
-        assert "invalid credentials" in error_message or "unauthorized" in error_message
+        assert "invalid credentials" in error_message or "unauthorized" in error_message  # nosec B101
 
     def test_get_bearer_token_with_invalid_user_pool(self, simple_auth):
         """Test getting Bearer token with invalid User Pool ID."""
@@ -108,11 +110,11 @@ class TestSimpleAuthIntegration:
                 user_pool_id="invalid_pool_id",
                 client_id="invalid_client_id",
                 username="test_user",
-                password="test_password",
+                password="test_password",  # nosec B106 - Test credential for auth failure testing
             )
 
         # Should get an authentication error
-        assert "Authentication failed" in str(exc_info.value)
+        assert "Authentication failed" in str(exc_info.value)  # nosec B101
 
     def test_end_to_end_authentication_flow(
         self, simple_auth, cognito_config, credentials
@@ -131,13 +133,13 @@ class TestSimpleAuthIntegration:
             )
 
             # Step 3: Verify token is valid
-            assert token is not None
-            assert isinstance(token, str)
-            assert len(token) > 0
+            assert token is not None  # nosec B101
+            assert isinstance(token, str)  # nosec B101
+            assert len(token) > 0  # nosec B101
 
             # Basic JWT format check
             token_parts = token.split(".")
-            assert len(token_parts) == 3
+            assert len(token_parts) == 3  # nosec B101
 
             print("✅ End-to-end authentication flow completed successfully")
 

@@ -1,5 +1,7 @@
 """Health check tests for AgentCore MCP server monitoring and observability."""
 
+# nosec B101
+
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -22,8 +24,8 @@ class TestMcpServerHealth:
         )
 
         log_groups = response.get("logGroups", [])
-        assert len(log_groups) == 1, f"Expected log group {log_group_name} to exist"
-        assert log_groups[0]["logGroupName"] == log_group_name
+        assert len(log_groups) == 1, f"Expected log group {log_group_name} to exist"  # nosec B101
+        assert log_groups[0]["logGroupName"] == log_group_name  # nosec B101
 
     def test_mcp_server_runtime_metrics_queryable(self):
         """Test that CloudWatch metrics can be queried for the MCP server runtime."""
@@ -46,4 +48,4 @@ class TestMcpServerHealth:
 
         # The query should succeed and return a list (may be empty for new deployments)
         datapoints = response.get("Datapoints", [])
-        assert isinstance(datapoints, list)
+        assert isinstance(datapoints, list)  # nosec B101
