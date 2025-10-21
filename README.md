@@ -149,6 +149,8 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 2.6 [Generating Traces: Running Cases in Bulk](#26-generating-traces-running-cases-in-bulk)  
 2.7 [CloudWatch Custom Metrics](#27-cloudwatch-custom-metrics)  
 2.8 [Deploying and Invoking the BedrockConverseAgent](#28-deploying-and-invoking-the-bedrockconverseagent)  
+ 2.8.1 [General Deployment Patterns](#281-general-deployment-patterns)  
+ 2.8.2 [Amazon Bedrock AgentCore Integration](#282-amazon-bedrock-agentcore-integration)  
 2.9 [Web UI for Conversation Debugging](#29-web-ui-for-conversation-debugging)  
 2.10 [Mocking and Testing](#210-mocking-and-testing)  
 2.11 [Model Context Protocol (MCP) Client](#211-model-context-protocol-mcp-client)
@@ -1703,6 +1705,8 @@ In your Lambda function definition, if the above file is stored as `index.py`, y
 
 ### 2.8 Deploying and Invoking the `BedrockConverseAgent`
 
+#### 2.8.1 General Deployment Patterns
+
 > Also see our **sample notebook [deploying_on_aws.ipynb](/examples/deploying_on_aws.ipynb)**.
 
 A typical deployment of an agent using the Generative AI Toolkit would be, per the [reference architecture](#reference-architecture) mentioned above:
@@ -1711,7 +1715,7 @@ A typical deployment of an agent using the Generative AI Toolkit would be, per t
 2. An Amazon DynamoDB table to store conversation history and traces. This table has a stream enabled. The AWS Lambda function, your agent, would write its traces to this table. Additionally (using the `TeeTracer` and the `OtlpTracer`) the agent would send the traces to AWS X-Ray for developer inspection.
 3. An AWS Lambda Function, that is attached to the DynamoDB table stream, to run `GenerativeAIToolkit.eval()` on the collected traces. This Lambda function would write the collected measurements to stdout in EMF format (see above), to make the measurements available in Amazon CloudWatch Metrics.
 
-#### Using the `Runner` to run your agent as Lambda function
+##### Using the `Runner` to run your agent as Lambda function
 
 The following code shows how you can implement your Generative AI Toolkit based agent as Lambda function, per the description above.
 
@@ -1747,7 +1751,7 @@ In your Lambda function definition, if the above file is stored as `index.py`, y
 
 Note that you must use the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) to run the `Runner` on AWS Lambda.
 
-#### Invoking the AWS Lambda Function URL with the `IamAuthInvoker`
+##### Invoking the AWS Lambda Function URL with the `IamAuthInvoker`
 
 If you use the `Runner` just explained, you would deploy your agent as an AWS Lambda Function that is exposed as Function URL. You should enable IAM Auth, in which case you must [sign all requests with AWS Signature V4 as explained here](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html).
 
@@ -1778,7 +1782,7 @@ for tokens in response2:
     print(tokens, end="", flush=True)
 ```
 
-#### Invoking the AWS Lambda Function URL with `curl`
+##### Invoking the AWS Lambda Function URL with `curl`
 
 Using `curl` works too because `curl` supports SigV4 out of the box:
 
@@ -1794,7 +1798,7 @@ curl -v \
   --aws-sigv4 "aws:amz:$AWS_REGION:lambda"
 ```
 
-#### Deployments outside AWS Lambda e.g. containerized as a pod on EKS
+##### Deployments outside AWS Lambda e.g. containerized as a pod on EKS
 
 The `Runner` is a WSGI application and can be run with any compatible server, such as `gunicorn`.
 
@@ -1837,7 +1841,7 @@ Make sure to tune concurrency. By default `gunicorn` runs with 1 worker (process
 gunicorn --workers 4 --threads 5 "path.to.agent:Runner()"
 ```
 
-#### Security: ensure users access their own conversation history only
+##### Security: ensure users access their own conversation history only
 
 You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user.
 
@@ -1881,7 +1885,7 @@ Runner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
 
 > The `Runner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
 
-#### Security: ensure your tools operate with the right privileges
+##### Security: ensure your tools operate with the right privileges
 
 Where relevant, your tools should use the `auth_context` within the `AgentContext` to determine the identity of the user (e.g. for authorization):
 
@@ -2001,6 +2005,22 @@ INSERT INTO customer_orders (customer_id, order_details, amount) VALUES
     ('user456', 'Order for books', 45.50),
     ('user123', 'Order for mouse', 25.99);
 ```
+
+#### 2.8.2 Amazon Bedrock AgentCore Integration
+
+The Generative AI Toolkit integrates with Amazon Bedrock AgentCore Runtime for agent deployments. AgentCore provides managed infrastructure, automatic scaling, and enterprise security features.
+
+The `examples/agentcore/` directory contains a complete weather agent implementation that demonstrates:
+
+- **Containerized Architecture**: Separate containers for agent and MCP server components
+- **Model Context Protocol (MCP)**: Tool communication between agent and server containers
+- **Pydantic-Based Tools**: Type-safe tool definitions with automatic schema generation
+- **CDK Infrastructure**: Automated deployment templates
+- **Comprehensive Testing**: Test suite with evaluation framework integration
+
+This example showcases building scalable, maintainable AI agents with proper separation of concerns and automated deployment patterns.
+
+> **See the complete example**: [examples/agentcore/README.md](/examples/agentcore/README.md)
 
 ### 2.9 Web UI for Conversation Debugging
 
