@@ -17,7 +17,6 @@ Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 
 # nosec B101
 
-import os
 import textwrap
 
 import agent
@@ -138,37 +137,50 @@ class TestAgentLocalIntegration:
 
     @pytest.mark.integration
     def test_agent_error_handling(self):
-        """Test agent error handling with invalid model configuration.
+        """Test agent error handling with invalid payload format.
 
-        Verifies that the agent gracefully handles Bedrock model validation errors
+        Verifies that the agent gracefully handles invalid input payloads
         and returns a user-friendly error message instead of crashing.
         """
 
-        # Test with invalid model ID
-        original_model = os.environ.get("BEDROCK_MODEL_ID")
-        os.environ["BEDROCK_MODEL_ID"] = "invalid-model-id"
+        # Test with invalid payload format (missing required fields)
+        invalid_payloads = [
+            {},  # Empty payload
+            {"sessionId": "error-test"},  # Missing input
+            {"input": {}},  # Missing prompt in input
+        ]
 
-        try:
+        for i, payload in enumerate(invalid_payloads):
+            try:
+                result = agent.invoke(payload)
 
-            payload = {"input": {"prompt": "Test prompt"}, "sessionId": "error-test"}
+                # Should handle error gracefully and return error message
+                assert (
+                    "result" in result
+                ), f"Payload {i}: Missing result field"  # nosec B101
+                result_text = result["result"]
 
-            result = agent.invoke(payload)
+                # Check for the specific error message format
+                assert result_text.startswith(
+                    "Error: Invalid payload format"
+                ), f"Payload {i}: Expected 'Error: Invalid payload format' message, got: {result['result']}"  # nosec B101
+                assert (
+                    "Expected: {'input': {'prompt': 'message'}}" in result_text
+                ), f"Payload {i}: Expected format specification in error message, got: {result['result']}"  # nosec B101
 
-            # Should handle error gracefully and return error message
-            assert "result" in result  # nosec B101
-            result_text = result["result"].lower()
+            except Exception as e:
+                pytest.fail(
+                    f"Agent should handle invalid payload {i} gracefully, but raised: {e}"
+                )
 
-            # Check for the specific error message format returned by the agent
-            assert (  # nosec B101
-                "model configuration error" in result_text
-                or "is not available" in result_text
-                or "invalid-model-id" in result_text
-            ), f"Expected model configuration error message, got: {result['result']}"
-
-        finally:
-            # Restore original model ID
-            if original_model:
-                os.environ["BEDROCK_MODEL_ID"] = original_model
+        # Test with valid payload to ensure normal operation still works
+        valid_payload = {"input": {"prompt": "Hello"}, "sessionId": "error-test"}
+        result = agent.invoke(valid_payload)
+        assert "result" in result  # nosec B101
+        assert not result["result"].startswith(
+            "Error:"
+        ), f"Valid payload should not return error, got: {result['result']}"  # nosec B101
+        print("✅ Valid payload works correctly")
 
     @pytest.mark.integration
     def test_agent_session_handling(self):

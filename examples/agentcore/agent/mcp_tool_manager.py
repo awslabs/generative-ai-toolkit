@@ -103,8 +103,8 @@ class McpToolManager:
             # Force reconnection
             try:
                 await client.disconnect()
-            except:
-                pass  # Ignore disconnect errors
+            except Exception:  # nosec B110
+                pass  # Ignore disconnect errors during reconnection
 
             await client.connect()
             logger.info("MCP client reconnected successfully")
