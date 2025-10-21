@@ -19,7 +19,7 @@ import textwrap
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Unpack
+from typing import TYPE_CHECKING, Any, Protocol, Unpack, runtime_checkable
 
 import boto3
 import boto3.session
@@ -51,6 +51,7 @@ class ConversationPage:
     next_page_token: Any | None = None
 
 
+@runtime_checkable
 class ConversationList(Protocol):
 
     @property
