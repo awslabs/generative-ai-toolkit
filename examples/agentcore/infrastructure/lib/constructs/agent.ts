@@ -4,7 +4,9 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
-import { OAuthAuth } from "./oauth-auth";
+import { AgentUser } from "./agent-user";
+import { CognitoAuth } from "./cognito-auth";
+import { RequestHeaderConfig } from "./request-header-config";
 
 export interface AgentProps {
   /**
@@ -16,9 +18,26 @@ export interface AgentProps {
    */
   readonly mcpServerRuntimeArn: string;
   /**
-   * OAuth authentication construct for accessing test user credentials
+   * Cognito authentication construct for OAuth infrastructure
    */
-  readonly oauthAuth: OAuthAuth;
+  readonly cognitoAuth: CognitoAuth;
+  /**
+   * Agent user for MCP server authentication
+   */
+  readonly agentUser: AgentUser;
+  /**
+   * Whether to enable JWT bearer token authentication for the agent runtime
+   * When enabled, the agent can be invoked with OAuth JWT tokens from Cognito
+   * @default true
+   */
+  readonly enableJwtAuth?: boolean;
+  /**
+   * The Bedrock model ID to use for the agent
+   * Must be available in the deployment region
+   * @example "anthropic.claude-3-5-sonnet-20241022-v2:0"
+   * @example "eu.anthropic.claude-3-5-sonnet-20241022-v2:0" (for EU regions)
+   */
+  readonly bedrockModelId: string;
 }
 
 export class Agent extends Construct {
@@ -40,10 +59,13 @@ export class Agent extends Construct {
       platform: Platform.LINUX_ARM64,
     });
 
+    const enableJwtAuth = props.enableJwtAuth ?? true;
+
     // IAM execution role
     this.executionRole = new iam.Role(this, "ExecutionRole", {
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
-      description: "Execution role for Agent runtime",
+      description:
+        "Execution role for Agent runtime with OAuth JWT authentication support",
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           "service-role/AmazonECSTaskExecutionRolePolicy"
@@ -55,18 +77,6 @@ export class Agent extends Construct {
       inlinePolicies: {
         AgentPermissions: new iam.PolicyDocument({
           statements: [
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: ["bedrock-agentcore:GetWorkloadAccessTokenForJWT"],
-              resources: [
-                `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
-                  cdk.Stack.of(this).account
-                }:workload-identity-directory/*`,
-                `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
-                  cdk.Stack.of(this).account
-                }:runtime/*`,
-              ],
-            }),
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: [
@@ -91,7 +101,10 @@ export class Agent extends Construct {
               resources: [
                 `arn:aws:logs:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:log-group:/aws/bedrock-agentcore/runtimes/*`,
+                }:log-group:/aws/bedrock-agentcore/*`,
+                `arn:aws:logs:${cdk.Stack.of(this).region}:${
+                  cdk.Stack.of(this).account
+                }:log-group:/aws/bedrock-agentcore/*:log-stream:*`,
               ],
             }),
             new iam.PolicyStatement({
@@ -100,7 +113,7 @@ export class Agent extends Construct {
               resources: [
                 `arn:aws:logs:${cdk.Stack.of(this).region}:${
                   cdk.Stack.of(this).account
-                }:log-group:/aws/bedrock-agentcore/*`,
+                }:log-group:*`,
               ],
             }),
             new iam.PolicyStatement({
@@ -159,7 +172,7 @@ export class Agent extends Construct {
                 "secretsmanager:GetSecretValue",
                 "secretsmanager:DescribeSecret",
               ],
-              resources: [props.oauthAuth.testUserCredentials.secret.secretArn],
+              resources: [props.agentUser.credentials.secret.secretArn],
             }),
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
@@ -182,10 +195,24 @@ export class Agent extends Construct {
       },
     });
 
-    // Agent Runtime
-    this.runtime = new bedrockagentcore.CfnRuntime(this, "Runtime", {
+    // Common environment variables for the agent runtime
+    const environmentVariables = {
+      AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+      AWS_REGION: cdk.Stack.of(this).region,
+      BEDROCK_MODEL_ID: props.bedrockModelId,
+      MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
+      OAUTH_CREDENTIALS_SECRET_NAME:
+        props.agentUser.credentials.secret.secretName,
+      OAUTH_USER_POOL_ID: props.cognitoAuth.userPool.userPoolId,
+      OAUTH_USER_POOL_CLIENT_ID:
+        props.cognitoAuth.userPoolClient.userPoolClientId,
+    };
+
+    // Build base runtime configuration
+    const baseRuntimeConfig = {
       agentRuntimeName: `${namePrefix}_agent`.replace(/-/g, "_"),
-      description: "AgentCore runtime for the agent (HTTP protocol)",
+      description:
+        "AgentCore runtime for the agent (HTTP protocol) with JWT authentication support",
       roleArn: this.executionRole.roleArn,
       agentRuntimeArtifact: {
         containerConfiguration: {
@@ -196,16 +223,62 @@ export class Agent extends Construct {
         networkMode: "PUBLIC",
       },
       protocolConfiguration: "HTTP",
-      environmentVariables: {
-        AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
-        AWS_REGION: cdk.Stack.of(this).region,
-        BEDROCK_MODEL_ID: "eu.anthropic.claude-sonnet-4-20250514-v1:0",
-        MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
-        OAUTH_CREDENTIALS_SECRET_NAME:
-          props.oauthAuth.testUserCredentials.secret.secretName,
-        OAUTH_USER_POOL_ID: props.oauthAuth.userPool.userPoolId,
-        OAUTH_USER_POOL_CLIENT_ID:
-          props.oauthAuth.userPoolClient.userPoolClientId,
+      environmentVariables,
+    };
+
+    // Create runtime configuration with JWT authorization if enabled
+    const runtimeConfig: bedrockagentcore.CfnRuntimeProps = enableJwtAuth
+      ? {
+          ...baseRuntimeConfig,
+          authorizerConfiguration: {
+            customJwtAuthorizer: {
+              discoveryUrl: `https://cognito-idp.${
+                cdk.Stack.of(this).region
+              }.amazonaws.com/${
+                props.cognitoAuth.userPool.userPoolId
+              }/.well-known/openid-configuration`,
+              allowedClients: [
+                props.cognitoAuth.userPoolClient.userPoolClientId,
+              ],
+            },
+          },
+        }
+      : baseRuntimeConfig;
+
+    // Agent Runtime
+    this.runtime = new bedrockagentcore.CfnRuntime(
+      this,
+      "Runtime",
+      runtimeConfig
+    );
+
+    // Configure Authorization header passthrough using Custom Resource
+    // This works around the CloudFormation limitation for RequestHeaderConfiguration
+    new RequestHeaderConfig(this, "RequestHeaderConfig", {
+      runtimeId: this.runtime.attrAgentRuntimeId,
+      allowedHeaders: ["Authorization"],
+      runtimeConfig: {
+        containerUri: this.imageAsset.imageUri,
+        roleArn: this.executionRole.roleArn,
+        networkMode: "PUBLIC",
+        authorizerConfiguration: enableJwtAuth
+          ? {
+              customJWTAuthorizer: {
+                discoveryUrl: `https://cognito-idp.${
+                  cdk.Stack.of(this).region
+                }.amazonaws.com/${
+                  props.cognitoAuth.userPool.userPoolId
+                }/.well-known/openid-configuration`,
+                allowedClients: [
+                  props.cognitoAuth.userPoolClient.userPoolClientId,
+                ],
+              },
+            }
+          : undefined,
+        environmentVariables,
+        protocolConfiguration: "HTTP",
+        description:
+          "AgentCore runtime for the agent (HTTP protocol) with JWT authentication support",
       },
     });
 
@@ -238,9 +311,9 @@ export class Agent extends Construct {
 
     // Output OAuth credentials secret name
     new cdk.CfnOutput(this, "OAuthCredentialsSecretName", {
-      value: props.oauthAuth.testUserCredentials.secret.secretName,
+      value: props.agentUser.credentials.secret.secretName,
       description:
-        "Secrets Manager secret name for OAuth test user credentials",
+        "Secrets Manager secret name for OAuth agent user credentials used by agent.py to access mcp_server.py",
     });
   }
 }

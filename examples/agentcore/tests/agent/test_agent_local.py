@@ -18,9 +18,11 @@ Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 # nosec B101
 
 import textwrap
+from unittest.mock import Mock
 
 import agent
 import pytest
+from bedrock_agentcore.runtime.context import RequestContext
 
 from generative_ai_toolkit.evaluate.interactive import GenerativeAIToolkit
 from generative_ai_toolkit.metrics.modules.conversation import (
@@ -32,6 +34,13 @@ from generative_ai_toolkit.test import Case
 class TestAgentLocalIntegration:
     """Integration tests that run the agent with real AWS calls after CDK deployment."""
 
+    def create_mock_context(self, session_id: str = "test-session") -> RequestContext:
+        """Create a mock RequestContext for local testing."""
+        mock_context = Mock(spec=RequestContext)
+        mock_context.session_id = session_id
+        mock_context.request_headers = {}
+        return mock_context
+
     @pytest.mark.integration
     def test_agent_basic_functionality(self):
         """Test basic agent functionality with real Bedrock calls."""
@@ -42,7 +51,8 @@ class TestAgentLocalIntegration:
         }
 
         try:
-            result = agent.invoke(payload)
+            context = self.create_mock_context("integration-test-basic")
+            result = agent.invoke(payload, context)
 
             assert "result" in result  # nosec B101
             assert len(result["result"]) > 0  # nosec B101
@@ -152,7 +162,8 @@ class TestAgentLocalIntegration:
 
         for i, payload in enumerate(invalid_payloads):
             try:
-                result = agent.invoke(payload)
+                context = self.create_mock_context(f"error-test-{i}")
+                result = agent.invoke(payload, context)
 
                 # Should handle error gracefully and return error message
                 assert (
@@ -175,7 +186,8 @@ class TestAgentLocalIntegration:
 
         # Test with valid payload to ensure normal operation still works
         valid_payload = {"input": {"prompt": "Hello"}, "sessionId": "error-test"}
-        result = agent.invoke(valid_payload)
+        context = self.create_mock_context("error-test-valid")
+        result = agent.invoke(valid_payload, context)
         assert "result" in result  # nosec B101
         assert not result["result"].startswith(
             "Error:"
@@ -196,7 +208,8 @@ class TestAgentLocalIntegration:
         results = []
         for payload in sessions:
             try:
-                result = agent.invoke(payload)
+                context = self.create_mock_context(payload["sessionId"])
+                result = agent.invoke(payload, context)
                 results.append(result)
             except Exception as e:
                 pytest.fail(f"Agent invocation failed for session: {e}")

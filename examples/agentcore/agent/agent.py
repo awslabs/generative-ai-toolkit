@@ -8,6 +8,7 @@ import sys
 
 import boto3
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.runtime.context import RequestContext
 from mcp_tool_manager import McpToolManager
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
@@ -179,9 +180,66 @@ register_mcp_tools_safely(bedrock_agent)
 
 
 @app.entrypoint
-def invoke(payload: dict[str, object]) -> dict[str, str]:
+def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
     try:
+        # Print the full context object for debugging
+        logger.info(f"Full RequestContext: {context}")
+        logger.info(f"RequestContext type: {type(context)}")
+        logger.info(f"RequestContext dict: {context.__dict__}")
+
+        # Check for Authorization header and extract user info from JWT
+        if context.request_headers and "Authorization" in context.request_headers:
+            auth_header = context.request_headers["Authorization"]
+            logger.info(f"Authorization header found: {auth_header[:50]}...")
+
+            # Extract JWT token (remove "Bearer " prefix)
+            if auth_header.startswith("Bearer "):
+                jwt_token = auth_header[7:]  # Remove "Bearer " prefix
+
+                # Decode JWT token to extract user information (without verification for info extraction)
+                try:
+                    import base64
+                    import json
+
+                    # Decode JWT payload (second part after splitting by '.')
+                    parts = jwt_token.split(".")
+                    if len(parts) >= 2:
+                        # Add padding if needed for base64 decoding
+                        payload_b64 = parts[1]
+                        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+                        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                        jwt_claims = json.loads(payload_bytes)
+
+                        logger.info(f"JWT Claims: {json.dumps(jwt_claims, indent=2)}")
+
+                        # Extract user information
+                        user_id = jwt_claims.get("sub")
+                        username = jwt_claims.get("username")
+                        client_id = jwt_claims.get("client_id")
+
+                        if user_id:
+                            logger.info(
+                                f"Processing request for user: {user_id} (username: {username})"
+                            )
+                        else:
+                            logger.info("No user ID found in JWT claims")
+                    else:
+                        logger.warning("Invalid JWT token format")
+
+                except Exception as e:
+                    logger.error(f"Error decoding JWT token: {e}")
+            else:
+                logger.warning("Authorization header doesn't start with 'Bearer '")
+        else:
+            logger.info("No Authorization header found in request_headers")
+            if context.request_headers:
+                logger.info(
+                    f"Available headers: {list(context.request_headers.keys())}"
+                )
+            else:
+                logger.info("request_headers is None")
+
         # Extract session information and user message
         session_id, user_message = extract_session_info(payload)
 

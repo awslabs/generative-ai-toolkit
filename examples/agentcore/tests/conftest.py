@@ -1,5 +1,6 @@
 """Unified pytest configuration for AgentCore tests."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -50,19 +51,32 @@ def _setup_required_environment_variables():
         key = output["OutputKey"]
         value = output["OutputValue"]
 
-        if key.startswith("McpServerRuntimeArn"):
+        # MCP Server Runtime ARN
+        if "McpServerRuntimeArn" in key and "Endpoint" not in key:
             os.environ["MCP_SERVER_RUNTIME_ARN"] = value
-        elif key.startswith("AgentOAuthCredentialsSecretName"):
+        # Agent OAuth Credentials Secret Name (legacy output name)
+        elif "AgentOAuthCredentialsSecretName" in key:
             os.environ["OAUTH_CREDENTIALS_SECRET_NAME"] = value
-        elif key.startswith("OAuthAuthUserPoolId"):
+        # Agent User Credentials Secret Name (new output name)
+        elif "AgentUserCredentialsSecretName" in key:
+            os.environ["OAUTH_CREDENTIALS_SECRET_NAME"] = value
+        # Cognito User Pool ID
+        elif "CognitoAuthUserPoolId" in key:
             os.environ["OAUTH_USER_POOL_ID"] = value
-        elif key.startswith("OAuthAuthUserPoolClientId"):
+        # Cognito User Pool Client ID
+        elif "CognitoAuthUserPoolClientId" in key:
             os.environ["OAUTH_USER_POOL_CLIENT_ID"] = value
-        elif key.startswith("AgentRuntimeArn"):
+        # Client User Credentials Secret Name
+        elif "ClientUserCredentialsSecretName" in key:
+            os.environ["CLIENT_USER_CREDENTIALS_SECRET_NAME"] = value
+        # Agent Runtime ARN (not endpoint)
+        elif "AgentRuntimeArn" in key and "Endpoint" not in key:
             os.environ["AGENT_RUNTIME_ARN"] = value
-        elif key.startswith("AgentRuntimeEndpointArn"):
+        # Agent Runtime Endpoint ARN
+        elif "AgentRuntimeEndpointArn" in key:
             os.environ["AGENT_RUNTIME_ENDPOINT_ARN"] = value
-        elif key.startswith("McpServerRuntimeEndpointArn"):
+        # MCP Server Runtime Endpoint ARN
+        elif "McpServerRuntimeEndpointArn" in key:
             os.environ["MCP_SERVER_RUNTIME_ENDPOINT_ARN"] = value
 
 
@@ -111,6 +125,47 @@ def bedrock_agentcore_control_client():
 def bedrock_agentcore_client():
     """Create Bedrock AgentCore client for testing runtime invocation."""
     return boto3.client("bedrock-agentcore")
+
+
+# JWT Authentication fixtures
+
+
+@pytest.fixture(scope="session")
+def client_credentials() -> dict[str, str]:
+    """Retrieve client user credentials from AWS Secrets Manager."""
+    secret_name = os.environ["CLIENT_USER_CREDENTIALS_SECRET_NAME"]
+    region = os.environ["AWS_REGION"]
+
+    # Create a Secrets Manager client
+    session = boto3.session.Session()
+    client = session.client(service_name="secretsmanager", region_name=region)
+
+    get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+    secret = json.loads(get_secret_value_response["SecretString"])
+    return {"username": secret["username"], "password": secret["password"]}
+
+
+@pytest.fixture(scope="session")
+def jwt_token(client_credentials: dict[str, str]) -> str:
+    """Authenticate with Cognito and get JWT access token."""
+    client_id = os.environ["OAUTH_USER_POOL_CLIENT_ID"]
+    region = os.environ["AWS_REGION"]
+
+    # Create Cognito Identity Provider client
+    cognito_client = boto3.client("cognito-idp", region_name=region)
+
+    response = cognito_client.initiate_auth(
+        ClientId=client_id,
+        AuthFlow="USER_PASSWORD_AUTH",
+        AuthParameters={
+            "USERNAME": client_credentials["username"],
+            "PASSWORD": client_credentials["password"],
+        },
+    )
+
+    access_token = response["AuthenticationResult"]["AccessToken"]
+    assert access_token, "JWT access token should not be empty"
+    return access_token
 
 
 # Agent-specific fixtures - now using environment variables
