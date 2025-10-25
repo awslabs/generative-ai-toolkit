@@ -14,6 +14,8 @@
 
 
 import textwrap
+from types import NoneType
+from typing import Literal
 
 import pytest
 
@@ -22,7 +24,6 @@ from generative_ai_toolkit.test import Expect
 
 
 def test_tool():
-
     def sample_function():
         """This is a sample function"""
         return "Hello World"
@@ -37,7 +38,6 @@ def test_tool():
 
 
 def test_tool_with_multiline_description():
-
     def sample_function():
         """
         This is a sample function.
@@ -56,7 +56,6 @@ def test_tool_with_multiline_description():
 
 
 def test_tool_with_parameters():
-
     def sample_function_with_parameters(parameter1: str, parameter2: int):
         """
         This is a sample function with parameters.
@@ -97,7 +96,6 @@ def test_tool_with_parameters():
 
 
 def test_tool_with_optional_parameters():
-
     def sample_function_with_optional_parameters_1(
         parameter1: str, parameter2: int = 1
     ):
@@ -161,7 +159,6 @@ def test_tool_with_optional_parameters():
 
 
 def test_tool_without_docstring():
-
     def sample_function_without_docstring():
         return "Hello World"
 
@@ -385,3 +382,267 @@ def test_tool_with_multiline_parameter_descriptions(mock_bedrock_converse):
             }
         },
     }
+
+
+def test_tool_with_none_type():
+    """Test that type(None) is correctly mapped to null."""
+
+    def return_none(value: NoneType):
+        """
+        Returns none value.
+
+        Parameters
+        ----------
+        value : NoneType
+            A none value
+        """
+        return None
+
+    tool: Tool = BedrockConverseTool(return_none)
+    assert tool.tool_spec == {
+        "name": "return_none",
+        "description": "Returns none value.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "null",
+                        "description": "A none value",
+                    },
+                },
+                "required": ["value"],
+            }
+        },
+    }
+
+
+def test_tool_with_literal_string_type():
+    """Test that Literal string types include allowed values in description."""
+
+    def set_color(color: Literal["red", "green", "blue"]):
+        """
+        Sets the color.
+
+        Parameters
+        ----------
+        color : Literal["red", "green", "blue"]
+            The color to set
+        """
+        return f"Color set to {color}"
+
+    tool: Tool = BedrockConverseTool(set_color)
+    assert tool.tool_spec == {
+        "name": "set_color",
+        "description": "Sets the color.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "color": {
+                        "type": "string",
+                        "description": 'The color to set\n\nAllowed values: "red", "green", "blue"',
+                    },
+                },
+                "required": ["color"],
+            }
+        },
+    }
+    assert tool.invoke(color="red") == "Color set to red"
+
+
+def test_tool_with_literal_integer_type():
+    """Test that Literal integer types include allowed values in description."""
+
+    def set_level(level: Literal[1, 2, 3, 4, 5]):
+        """
+        Sets the level.
+
+        Parameters
+        ----------
+        level : Literal[1, 2, 3, 4, 5]
+            The level to set
+        """
+        return f"Level set to {level}"
+
+    tool: Tool = BedrockConverseTool(set_level)
+    assert tool.tool_spec == {
+        "name": "set_level",
+        "description": "Sets the level.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "type": "integer",
+                        "description": "The level to set\n\nAllowed values: 1, 2, 3, 4, 5",
+                    },
+                },
+                "required": ["level"],
+            }
+        },
+    }
+    assert tool.invoke(level=3) == "Level set to 3"
+
+
+def test_tool_with_literal_boolean_type():
+    """Test that Literal boolean types include allowed values in description."""
+
+    def set_flag(flag: Literal[True]):
+        """
+        Sets the flag.
+
+        Parameters
+        ----------
+        flag : Literal[True]
+            The flag to set (must be True)
+        """
+        return f"Flag set to {flag}"
+
+    tool: Tool = BedrockConverseTool(set_flag)
+    assert tool.tool_spec == {
+        "name": "set_flag",
+        "description": "Sets the flag.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "flag": {
+                        "type": "boolean",
+                        "description": "The flag to set (must be True)\n\nAllowed values: True",
+                    },
+                },
+                "required": ["flag"],
+            }
+        },
+    }
+    assert tool.invoke(flag=True) == "Flag set to True"
+
+
+def test_tool_with_optional_literal_type():
+    """Test that Optional[Literal[...]] types work correctly."""
+
+    def set_mode(mode: Literal["fast", "slow", "medium"] | None = None):
+        """
+        Sets the processing mode.
+
+        Parameters
+        ----------
+        mode : Literal["fast", "slow", "medium"] | None
+            The processing mode
+        """
+        return f"Mode set to {mode}"
+
+    tool: Tool = BedrockConverseTool(set_mode)
+    assert tool.tool_spec == {
+        "name": "set_mode",
+        "description": "Sets the processing mode.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": 'The processing mode\n\nAllowed values: "fast", "slow", "medium"',
+                    },
+                },
+            }
+        },
+    }
+    assert tool.invoke(mode="fast") == "Mode set to fast"
+    assert tool.invoke() == "Mode set to None"
+
+
+def test_tool_with_optional_none_type():
+    """Test that optional None parameters work correctly."""
+
+    def process_value(value: str, optional_none: None | str = None):
+        """
+        Process a value with an optional None parameter.
+
+        Parameters
+        ----------
+        value : str
+            The value to process
+        optional_none : None | str
+            An optional parameter that can be None or string
+        """
+        return f"Processed: {value}, Optional: {optional_none}"
+
+    tool: Tool = BedrockConverseTool(process_value)
+    assert tool.tool_spec == {
+        "name": "process_value",
+        "description": "Process a value with an optional None parameter.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "description": "The value to process",
+                    },
+                    "optional_none": {
+                        "type": "string",
+                        "description": "An optional parameter that can be None or string",
+                    },
+                },
+                "required": ["value"],
+            }
+        },
+    }
+    assert tool.invoke(value="test") == "Processed: test, Optional: None"
+    assert (
+        tool.invoke(value="test", optional_none="data")
+        == "Processed: test, Optional: data"
+    )
+
+
+def test_tool_with_mixed_literal_and_regular_types():
+    """Test tool with both Literal and regular types."""
+
+    def configure_system(
+        name: str, mode: Literal["auto", "manual"], max_retries: int = 3
+    ):
+        """
+        Configures the system.
+
+        Parameters
+        ----------
+        name : str
+            The system name
+        mode : Literal["auto", "manual"]
+            The operation mode
+        max_retries : int
+            Maximum number of retries
+        """
+        return f"Configured {name} in {mode} mode with {max_retries} retries"
+
+    tool: Tool = BedrockConverseTool(configure_system)
+    assert tool.tool_spec == {
+        "name": "configure_system",
+        "description": "Configures the system.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The system name",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": 'The operation mode\n\nAllowed values: "auto", "manual"',
+                    },
+                    "max_retries": {
+                        "type": "integer",
+                        "description": "Maximum number of retries",
+                    },
+                },
+                "required": ["name", "mode"],
+            }
+        },
+    }
+    assert (
+        tool.invoke(name="MySystem", mode="auto")
+        == "Configured MySystem in auto mode with 3 retries"
+    )

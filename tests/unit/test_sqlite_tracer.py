@@ -208,10 +208,14 @@ class TestSqliteTracer:
     def test_persist_nested_traces_with_inheritance(self, tracer):
         """Test that inheritable attributes properly propagate to child spans."""
         conversation_id = "conv-inheritance-test"
+        subcontext_id = "subcontext-inheritance-1"
 
         with tracer.trace("grandparent", span_kind="SERVER") as grandparent:
             grandparent.add_attribute(
                 "ai.conversation.id", conversation_id, inheritable=True
+            )
+            grandparent.add_attribute(
+                "ai.subcontext.id", subcontext_id, inheritable=True
             )
             grandparent.add_attribute(
                 "ai.auth.context", {"principal_id": "user456"}, inheritable=True
@@ -230,7 +234,7 @@ class TestSqliteTracer:
 
         # Verify inheritance worked correctly
         traces = tracer.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_id}
         )
         assert len(traces) == 3
 
@@ -238,6 +242,7 @@ class TestSqliteTracer:
 
         # Child should have all inherited attributes
         assert child_trace.attributes["ai.conversation.id"] == conversation_id
+        assert child_trace.attributes["ai.subcontext.id"] == subcontext_id
         assert child_trace.attributes["ai.auth.context"]["principal_id"] == "user456"
         assert child_trace.attributes["request.id"] == "req-123"
         assert child_trace.attributes["operation.stage"] == "processing"
@@ -286,7 +291,7 @@ class TestSqliteTracer:
 
         # Retrieve by conversation ID
         traces = tracer.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": None}
         )
 
         assert len(traces) == 1
@@ -306,6 +311,11 @@ class TestSqliteTracer:
         ):
             tracer.get_traces(attribute_filter={"some.other.attr": "value"})
 
+        with pytest.raises(
+            ValueError, match="To use get_traces\\(\\) you must either provide trace_id"
+        ):
+            tracer.get_traces(attribute_filter={"ai.conversation.id": "conv-123"})
+
     def test_get_traces_with_identifier_filter(self, temp_db_path):
         """Test that traces are filtered by identifier."""
         # Create tracers with different identifiers
@@ -316,11 +326,15 @@ class TestSqliteTracer:
         tracer2.set_context(resource_attributes={"service.name": "Agent2"})
 
         conversation_id = "conv-identifier-test"
+        subcontext_id = "subcontext-filter-1"
 
         # Create traces with each tracer
         with tracer1.trace("operation_1") as trace1:
             trace1.add_attribute(
                 "ai.conversation.id", conversation_id, inheritable=True
+            )
+            trace1.add_attribute(
+                "ai.subcontext.id", subcontext_id, inheritable=True
             )
             trace1.add_attribute("session.data", "session1_data")
             time.sleep(0.01)
@@ -329,15 +343,18 @@ class TestSqliteTracer:
             trace2.add_attribute(
                 "ai.conversation.id", conversation_id, inheritable=True
             )
+            trace2.add_attribute(
+                "ai.subcontext.id", subcontext_id, inheritable=True
+            )
             trace2.add_attribute("session.data", "session2_data")
             time.sleep(0.01)
 
         # Each tracer should only see its own traces
         traces1 = tracer1.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_id}
         )
         traces2 = tracer2.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_id}
         )
 
         assert len(traces1) == 1
@@ -372,6 +389,7 @@ class TestSqliteTracer:
         traces = tracer.get_traces(
             attribute_filter={
                 "ai.conversation.id": conversation_id,
+                "ai.subcontext.id": None,
                 "operation.type": "read",
             }
         )
@@ -412,7 +430,7 @@ class TestSqliteTracer:
 
         # Retrieve and verify order (should be chronological by started_at)
         traces = tracer.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": None}
         )
 
         assert len(traces) == 3
@@ -451,6 +469,7 @@ class TestSqliteTracer:
         num_threads = 5
         traces_per_thread = 3
         conversation_id = "conv-concurrent-test"
+        subcontext_id = "subcontext-concurrent-1"
         all_trace_ids = []
 
         def create_traces(thread_id):
@@ -459,6 +478,9 @@ class TestSqliteTracer:
                 with tracer.trace(f"thread_{thread_id}_span_{i}") as trace:
                     trace.add_attribute(
                         "ai.conversation.id", conversation_id, inheritable=True
+                    )
+                    trace.add_attribute(
+                        "ai.subcontext.id", subcontext_id, inheritable=True
                     )
                     trace.add_attribute("thread_id", thread_id)
                     trace.add_attribute("span_index", i)
@@ -481,7 +503,7 @@ class TestSqliteTracer:
         # Verify all traces were persisted
         total_expected = num_threads * traces_per_thread
         traces = tracer.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_id}
         )
 
         assert len(traces) == total_expected
@@ -493,6 +515,7 @@ class TestSqliteTracer:
             assert "thread_id" in trace.attributes
             assert "span_index" in trace.attributes
             assert trace.attributes["ai.trace.type"] == "concurrent-test"
+            assert trace.attributes["ai.subcontext.id"] == subcontext_id
 
     def test_trace_with_error_handling(self, tracer):
         """Test trace behavior when exceptions occur within context."""
@@ -558,7 +581,7 @@ class TestSqliteTracer:
 
         # Verify the complete conversation flow
         traces = tracer.get_traces(
-            attribute_filter={"ai.conversation.id": conversation_id}
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": None}
         )
         assert len(traces) == 4
 
@@ -575,3 +598,66 @@ class TestSqliteTracer:
         assert trace_types["intent_recognition"] == "llm-invocation"
         assert trace_types["weather_tool_call"] == "tool-invocation"
         assert trace_types["response_generation"] == "llm-invocation"
+
+    def test_subcontext_isolation(self, tracer):
+        """Test that different subcontext_ids properly isolate traces."""
+        conversation_id = "conv-subcontext-isolation"
+        subcontext_1 = "subcontext-alpha"
+        subcontext_2 = "subcontext-beta"
+
+        # Create traces with first subcontext
+        with tracer.trace("operation_subcontext_1") as trace1:
+            trace1.add_attribute(
+                "ai.conversation.id", conversation_id, inheritable=True
+            )
+            trace1.add_attribute(
+                "ai.subcontext.id", subcontext_1, inheritable=True
+            )
+            trace1.add_attribute("data", "alpha-data")
+            time.sleep(0.01)
+
+        # Create traces with second subcontext
+        with tracer.trace("operation_subcontext_2") as trace2:
+            trace2.add_attribute(
+                "ai.conversation.id", conversation_id, inheritable=True
+            )
+            trace2.add_attribute(
+                "ai.subcontext.id", subcontext_2, inheritable=True
+            )
+            trace2.add_attribute("data", "beta-data")
+            time.sleep(0.01)
+
+        # Create traces with no subcontext (NULL)
+        with tracer.trace("operation_no_subcontext") as trace3:
+            trace3.add_attribute(
+                "ai.conversation.id", conversation_id, inheritable=True
+            )
+            trace3.add_attribute("data", "no-subcontext-data")
+            time.sleep(0.01)
+
+        # Query for first subcontext - should only get trace1
+        traces_1 = tracer.get_traces(
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_1}
+        )
+        assert len(traces_1) == 1
+        assert traces_1[0].span_name == "operation_subcontext_1"
+        assert traces_1[0].attributes["data"] == "alpha-data"
+        assert traces_1[0].attributes["ai.subcontext.id"] == subcontext_1
+
+        # Query for second subcontext - should only get trace2
+        traces_2 = tracer.get_traces(
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": subcontext_2}
+        )
+        assert len(traces_2) == 1
+        assert traces_2[0].span_name == "operation_subcontext_2"
+        assert traces_2[0].attributes["data"] == "beta-data"
+        assert traces_2[0].attributes["ai.subcontext.id"] == subcontext_2
+
+        # Query for NULL subcontext - should only get trace3
+        traces_none = tracer.get_traces(
+            attribute_filter={"ai.conversation.id": conversation_id, "ai.subcontext.id": None}
+        )
+        assert len(traces_none) == 1
+        assert traces_none[0].span_name == "operation_no_subcontext"
+        assert traces_none[0].attributes["data"] == "no-subcontext-data"
+        assert "ai.subcontext.id" not in traces_none[0].attributes

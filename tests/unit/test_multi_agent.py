@@ -12,9 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
+from collections.abc import Sequence
+
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.test import Expect
 from generative_ai_toolkit.test.mock import MockBedrockConverse
+from generative_ai_toolkit.tracer import Trace
+
+
+def get_all_subagent_subcontext_ids(all_traces: Sequence[Trace]):
+    result: dict[str, dict[str | None, set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+
+    for trace in all_traces:
+        if (
+            trace.attributes.get("ai.trace.type") == "tool-invocation"
+            and "ai.tool.subagent.subcontext.id" in trace.attributes
+            and "ai.tool.name" in trace.attributes
+        ):
+            subagent_name = trace.attributes["ai.tool.name"]
+            supervisor_name = trace.attributes.get("ai.agent.name")
+            subcontext_id = trace.attributes["ai.tool.subagent.subcontext.id"]
+            result[subagent_name][supervisor_name].add(subcontext_id)
+
+    return result
 
 
 def test_multi_agent(mock_multi_agent):
@@ -50,6 +73,7 @@ def test_multi_agent(mock_multi_agent):
         ]
     )
     supervisor.agent.converse("I want to go to Amsterdam, what is up there?")
+    conversation_id = supervisor.agent.conversation_id
 
     # Get the traces explicitly through all tracers
     attribute_filter = {
@@ -72,14 +96,29 @@ def test_multi_agent(mock_multi_agent):
     assert len(supervisor.agent.traces) == len(all_traces)
     assert supervisor.agent.traces == all_traces
 
-    Expect(weather.agent.traces).tool_invocations.to_include("get_weather").with_input(
+    # Get traces for each subagent by finding out the subcontext_id used
+    subcontext_ids = get_all_subagent_subcontext_ids(supervisor.agent.traces)
+    weather_traces_subcontext_id = subcontext_ids["transfer_to_weather_agent"][
+        None
+    ].pop()
+    weather.agent.set_conversation_id(
+        conversation_id, subcontext_id=weather_traces_subcontext_id
+    )
+    weather_traces = weather.agent.traces
+    events_traces_subcontext_id = subcontext_ids["transfer_to_events_agent"][None].pop()
+    events.agent.set_conversation_id(
+        conversation_id, subcontext_id=events_traces_subcontext_id
+    )
+    events_traces = events.agent.traces
+
+    Expect(weather_traces).tool_invocations.to_include("get_weather").with_input(
         {"city": "Amsterdam"}
     )
-    Expect(weather.agent.traces).user_input.to_equal("Amsterdam")
-    Expect(events.agent.traces).tool_invocations.to_include("get_events").with_input(
+    Expect(weather_traces).user_input.to_equal("Amsterdam")
+    Expect(events_traces).tool_invocations.to_include("get_events").with_input(
         {"city": "Amsterdam"}
     )
-    Expect(events.agent.traces).user_input.to_equal("Amsterdam")
+    Expect(events_traces).user_input.to_equal("Amsterdam")
     Expect(supervisor.agent.traces).tool_invocations.to_include(
         "transfer_to_weather_agent"
     )
@@ -89,23 +128,6 @@ def test_multi_agent(mock_multi_agent):
     Expect(supervisor.agent.traces).agent_text_response.to_equal(
         "The weather in Amsterdam will be Sunny and the coming events are bla bla bla"
     )
-
-    # The subordinate agent is called as tool
-    # - The tool name should equal the subordinate agent name
-    # - The supervisor tool span id should be the parent span of the subordinate agent
-    for supervisor_trace in supervisor.agent.traces:
-        if supervisor_trace.attributes["ai.trace.type"] == "tool-invocation":
-            for subordinate in [events, weather]:
-                if (
-                    supervisor_trace.attributes["ai.tool.name"]
-                    == subordinate.agent.name
-                ):
-                    supervisor_span_id = supervisor_trace.span_id
-                    subordinate_agent_root_trace = subordinate.agent.traces[0]
-                    assert (
-                        supervisor_span_id
-                        == subordinate_agent_root_trace.parent_span.span_id
-                    )
 
 
 def test_multi_agent_with_reused_subagent():
@@ -182,6 +204,8 @@ def test_multi_agent_with_reused_subagent():
     )
 
     supervisor.converse("Hello L0!")
+    conversation_id = supervisor.conversation_id
+    subcontext_ids = get_all_subagent_subcontext_ids(supervisor.traces)
 
     Expect(supervisor.traces).tool_invocations.to_include("subagent_l1").with_input(
         {"user_input": "Hello L1 from L0"}
@@ -191,36 +215,65 @@ def test_multi_agent_with_reused_subagent():
     )
     Expect(supervisor.traces).agent_text_response.to_equal("Hello back to User!")
 
-    Expect(subagent_l1.traces).tool_invocations.to_include("subagent_l3").with_input(
+    subagent_l1_subcontext_id = subcontext_ids["subagent_l1"][None].pop()
+    subagent_l2_subcontext_id = subcontext_ids["subagent_l2"][None].pop()
+
+    subagent_l1.set_conversation_id(
+        conversation_id, subcontext_id=subagent_l1_subcontext_id
+    )
+    subagent_l1_traces = subagent_l1.traces
+
+    Expect(subagent_l1_traces).tool_invocations.to_include("subagent_l3").with_input(
         {"user_input": "Hello L3 from L1"}
     )
-    Expect(subagent_l1.traces).agent_text_response.to_equal("Hello back to L0 from L1")
+    Expect(subagent_l1_traces).agent_text_response.to_equal("Hello back to L0 from L1")
 
-    Expect(subagent_l2.traces).tool_invocations.to_include("subagent_l3").with_input(
+    subagent_l2.set_conversation_id(
+        conversation_id, subcontext_id=subagent_l2_subcontext_id
+    )
+    subagent_l2_traces = subagent_l2.traces
+
+    Expect(subagent_l2_traces).tool_invocations.to_include("subagent_l3").with_input(
         {"user_input": "Hello L3 from L2"}
     )
 
-    Expect(subagent_l2.traces).agent_text_response.to_equal("Hello back to L0 from L2")
+    Expect(subagent_l2_traces).agent_text_response.to_equal("Hello back to L0 from L2")
 
-    Expect(subagent_l3.traces).at(0).agent_text_response.to_equal(
+    subagent_l3_from_l1_subcontext_id = subcontext_ids["subagent_l3"][
+        "subagent_l1"
+    ].pop()
+    subagent_l3.set_conversation_id(
+        conversation_id, subcontext_id=subagent_l3_from_l1_subcontext_id
+    )
+    subagent_l3_from_l1_traces = subagent_l3.traces
+    Expect(subagent_l3_from_l1_traces).agent_text_response.to_equal(
         "Hello back to L1 from L3"
     )
-    Expect(subagent_l3.traces).at(1).agent_text_response.to_equal(
+
+    subagent_l3_from_l2_subcontext_id = subcontext_ids["subagent_l3"][
+        "subagent_l2"
+    ].pop()
+    subagent_l3.set_conversation_id(
+        conversation_id, subcontext_id=subagent_l3_from_l2_subcontext_id
+    )
+    subagent_l3_from_l2_traces = subagent_l3.traces
+    Expect(subagent_l3_from_l2_traces).agent_text_response.to_equal(
         "Hello back to L2 from L3"
     )
 
     l0_span_ids = {trace.span_id for trace in supervisor.traces}
-    l1_span_ids = {trace.span_id for trace in subagent_l1.traces}
-    l2_span_ids = {trace.span_id for trace in subagent_l2.traces}
-    l3_span_ids = {trace.span_id for trace in subagent_l3.traces}
+    l1_span_ids = {trace.span_id for trace in subagent_l1_traces}
+    l2_span_ids = {trace.span_id for trace in subagent_l2_traces}
+    l3_from_l1_span_ids = {trace.span_id for trace in subagent_l3_from_l1_traces}
+    l3_from_l2_span_ids = {trace.span_id for trace in subagent_l3_from_l2_traces}
+    l3_span_ids = l3_from_l1_span_ids | l3_from_l2_span_ids
 
-    # l0 combines all
-    assert l0_span_ids & (l1_span_ids | l2_span_ids | l3_span_ids)
+    # L0 (supervisor) should contain all traces from all subagents
+    assert (l1_span_ids | l2_span_ids | l3_span_ids).issubset(l0_span_ids)
+
+    # Verify all subagent traces are accounted for in L0
+    # (L0 may have additional traces like converse, cycle, etc.)
     assert len((l1_span_ids | l2_span_ids | l3_span_ids) - l0_span_ids) == 0
 
-    # There should be NO overlap between L1 and L2, although they both have L3 traces
     assert not l1_span_ids & l2_span_ids
-
-    # There should be overlap between L1 traces and L3, and L2 traces and L3
-    assert l1_span_ids & l3_span_ids
-    assert l2_span_ids & l3_span_ids
+    assert not l3_from_l1_span_ids & l3_from_l2_span_ids

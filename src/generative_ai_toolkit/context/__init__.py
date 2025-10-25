@@ -17,10 +17,15 @@
 
 
 import contextvars
+from collections.abc import Hashable
 from threading import Event
-from typing import Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from generative_ai_toolkit.tracer import NoopTracer, Tracer
+from generative_ai_toolkit.utils.ulid import Ulid
+
+if TYPE_CHECKING:
+    from generative_ai_toolkit.agent import Agent
 
 
 class AuthContext(TypedDict):
@@ -52,8 +57,17 @@ class AgentContext:
 
     stop_event: Event
     """
-    Stop event (threading) that may be set by the user to signal abortion; tools that run for a longer span of time
+    Stop event (threading) that may be set to signal abortion; tools that run for a longer span of time
     should consult the stop event regularly (`stop_event.is_set()`) and abort early if it is set
+    """
+
+    context_key: Hashable
+    """The context key; tools can use it for advanced purposes such as caching results per unique context"""
+
+    agent: "Agent | None"
+    """
+    The agent instance that is executing the tool; tools can use it for intricate operations
+    such as registering new tools dynamically
     """
 
     def __init__(
@@ -63,11 +77,15 @@ class AgentContext:
         tracer: Tracer,
         auth_context: AuthContext,
         stop_event: Event | None,
+        context_key: Hashable | None = None,
+        agent: "Agent | None" = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.tracer = tracer
         self.auth_context = auth_context
         self.stop_event = stop_event or Event()
+        self.context_key = context_key or Ulid()
+        self.agent = agent
 
     @classmethod
     def current(cls) -> "AgentContext":
@@ -114,7 +132,9 @@ class AgentContext:
             conversation_id=conversation_id,
             tracer=tracer or NoopTracer(),
             auth_context=(
-                auth_context.copy() if auth_context else AuthContext(principal_id="test")
+                auth_context.copy()
+                if auth_context
+                else AuthContext(principal_id="test")
             ),
             stop_event=stop_event,
         )

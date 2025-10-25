@@ -13,5 +13,5 @@
 # limitations under the License.
 
 
-class InvalidAPIKeyError:
+class StopEventAbortError(Exception):
     pass

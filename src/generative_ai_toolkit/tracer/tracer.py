@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from functools import wraps
@@ -322,6 +322,27 @@ class BaseTracer(Tracer, SnapshotCapableTracer):
     def persist_snapshot(self, trace: Trace):
         pass
 
+    @staticmethod
+    def apply_attribute_filter(
+        traces: Iterable[Trace],
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
+    ):
+        return sorted(
+            filter(
+                lambda trace: (trace_id is None or trace.trace_id == trace_id)
+                and (
+                    attribute_filter is None
+                    or all(
+                        k in trace.attributes and trace.attributes[k] == v
+                        for k, v in attribute_filter.items()
+                    )
+                ),
+                traces,
+            ),
+            key=lambda t: t.started_at,
+        )
+
 
 class NoopTracer(BaseTracer):
 
@@ -373,7 +394,7 @@ class HumanReadableTracer(StreamTracer):
         *,
         max_length: int | None = None,
         max_lines: int | None = None,
-        snapshot_trace_types: tuple[str] = ("llm-invocation",),
+        snapshot_trace_types: tuple[str, ...] = ("llm-invocation", "tool-invocation"),
         stream: TextIO | None = None,
         trace_context_provider: TraceContextProvider | None = None,
         print_snapshot_every: float | None = None,
@@ -409,8 +430,8 @@ class HumanReadableTracer(StreamTracer):
             or trace.attributes["ai.trace.type"] not in self.snapshot_trace_types
         ):
             return
-        now = time.monotonic()
         with self.lock:
+            now = time.monotonic()
             if (now - self.last_snapshot_printed) > self.print_snapshot_every:
                 human_readable_trace = trace.as_human_readable(
                     max_length=self.max_length, max_lines=self.max_lines
@@ -430,22 +451,21 @@ class InMemoryTracer(BaseTracer):
         self._memory: deque[Trace] = deque(maxlen=memory_size)
 
     def persist(self, trace: Trace):
-        self._memory.append(trace)
+        with self.lock:
+            self._memory.append(trace)
 
     def get_traces(
         self,
         trace_id: str | None = None,
         attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
-        return list(
-            filter(
-                lambda trace: not attribute_filter
-                or all(
-                    k in trace.attributes and trace.attributes[k] == v
-                    for k, v in attribute_filter.items()
-                ),
-                sorted(self._memory, key=lambda t: t.started_at),
-            )
+        with self.lock:
+            # Create a shallow copy of the deque to safely iterate
+            memory_snapshot = list(self._memory)
+        return self.apply_attribute_filter(
+            memory_snapshot,
+            trace_id=trace_id,
+            attribute_filter=attribute_filter,
         )
 
 
@@ -498,7 +518,8 @@ class SqliteTracer(BaseTracer):
                     ended_at TEXT,
                     attributes BLOB,
                     identifier TEXT,
-                    conversation_id TEXT
+                    conversation_id TEXT,
+                    subcontext_id TEXT
                 )
                 """
             )
@@ -514,6 +535,13 @@ class SqliteTracer(BaseTracer):
                 """
                 CREATE INDEX IF NOT EXISTS idx_traces_conversation_id_started_at
                 ON traces (conversation_id, started_at)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_traces_conversation_id_subcontext_id_started_at
+                ON traces (conversation_id, subcontext_id, started_at)
                 """
             )
 
@@ -554,8 +582,9 @@ class SqliteTracer(BaseTracer):
                  ended_at,
                  attributes,
                  identifier,
-                 conversation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 conversation_id,
+                 subcontext_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace.trace_id,
@@ -572,6 +601,7 @@ class SqliteTracer(BaseTracer):
                     JsonBytes.dumps(dict(trace.attributes)),
                     self.identifier,
                     trace.attributes.get("ai.conversation.id") or None,
+                    trace.attributes.get("ai.subcontext.id") or None,
                 ),
             )
             conn.commit()
@@ -596,22 +626,36 @@ class SqliteTracer(BaseTracer):
                     ended_at,
                     attributes,
                     identifier,
-                    conversation_id
+                    conversation_id,
+                    subcontext_id
             FROM traces
             WHERE (identifier IS ? OR (identifier IS NULL AND ? IS NULL))
             """
         ]
         params = [self.identifier, self.identifier]
-
+        # Create shallow copy:
+        attribute_filter = dict(attribute_filter or {})
         if trace_id:
             query_parts.append("AND trace_id = ?")
             params.append(trace_id)
-        elif attribute_filter and "ai.conversation.id" in attribute_filter:
+        elif (
+            attribute_filter
+            and "ai.conversation.id" in attribute_filter
+            and "ai.subcontext.id" in attribute_filter
+        ):
+            conversation_id = attribute_filter.pop("ai.conversation.id")
+            subcontext_id = attribute_filter.pop("ai.subcontext.id")
             query_parts.append("AND conversation_id = ?")
-            params.append(attribute_filter["ai.conversation.id"])
+            params.append(conversation_id)
+            # Handle NULL subcontext_id correctly in SQL
+            if subcontext_id is None:
+                query_parts.append("AND subcontext_id IS NULL")
+            else:
+                query_parts.append("AND subcontext_id = ?")
+                params.append(subcontext_id)
         else:
             raise ValueError(
-                "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
+                "To use get_traces() you must either provide trace_id, or attribute_filter with keys 'ai.conversation.id' and 'ai.subcontext.id'"
             )
 
         query_parts.append("ORDER BY started_at ASC")
@@ -630,13 +674,6 @@ class SqliteTracer(BaseTracer):
                     if row["resource_attributes"]
                     else {}
                 )
-
-                if attribute_filter:
-                    if not all(
-                        k in attributes and attributes[k] == v
-                        for k, v in attribute_filter.items()
-                    ):
-                        continue
 
                 started_at = datetime.fromisoformat(row["started_at"])
                 ended_at = (
@@ -663,11 +700,18 @@ class SqliteTracer(BaseTracer):
 
                 traces[trace.span_id] = trace
 
-        return sorted(traces.values(), key=lambda t: t.started_at)
+        return self.apply_attribute_filter(
+            traces.values(),
+            trace_id=trace_id,
+            attribute_filter=attribute_filter,
+        )
 
 
 @runtime_checkable
 class ChainableTracer(Tracer, Protocol):
+    @property
+    def tracers(self) -> Sequence[Tracer]: ...
+
     def add_tracer(self, tracer: Tracer) -> "TeeTracer": ...
 
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer": ...
@@ -687,20 +731,22 @@ class TeeTracer(BaseTracer, ChainableTracer):
         self._tracers = []
 
     @property
-    def tracers(self) -> list[Tracer]:
+    def tracers(self) -> Sequence[Tracer]:
         return self._tracers
 
     def add_tracer(self, tracer: Tracer) -> "TeeTracer":
-        if not self.snapshot_enabled and isinstance(tracer, SnapshotCapableTracer):
-            self.snapshot_enabled = True
-        self._tracers.append(tracer)
+        with self.lock:
+            if not self.snapshot_enabled and isinstance(tracer, SnapshotCapableTracer):
+                self.snapshot_enabled = True
+            self._tracers.append(tracer)
         return self  # allow chaining add_tracer() calls
 
     def remove_tracer(self, tracer: Tracer) -> "TeeTracer":
-        self._tracers.remove(tracer)
-        for remaining_tracer in self._tracers:
-            if isinstance(remaining_tracer, SnapshotCapableTracer):
-                break
+        with self.lock:
+            self._tracers.remove(tracer)
+            for remaining_tracer in self._tracers:
+                if isinstance(remaining_tracer, SnapshotCapableTracer):
+                    break
             else:
                 self.snapshot_enabled = False
 
@@ -715,22 +761,26 @@ class TeeTracer(BaseTracer, ChainableTracer):
             self.remove_tracer(tracer)
 
     def persist(self, trace: Trace):
-        for tracer in self._tracers:
-            tracer.persist(trace)
+        with self.lock:
+            for tracer in self._tracers:
+                tracer.persist(trace)
 
     def persist_snapshot(self, trace: Trace):
-        for tracer in self._tracers:
-            if isinstance(tracer, SnapshotCapableTracer):
-                tracer.persist_snapshot(trace)
+        with self.lock:
+            for tracer in self._tracers:
+                if isinstance(tracer, SnapshotCapableTracer):
+                    tracer.persist_snapshot(trace)
 
     def get_traces(
         self,
         trace_id: str | None = None,
         attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
-        if not self._tracers:
-            return []
-        return self._tracers[0].get_traces(
+        with self.lock:
+            if not self._tracers:
+                return []
+            first_tracer = self._tracers[0]
+        return first_tracer.get_traces(
             trace_id=trace_id, attribute_filter=attribute_filter
         )
 

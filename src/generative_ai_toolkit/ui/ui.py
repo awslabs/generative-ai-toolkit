@@ -14,10 +14,11 @@
 
 import functools
 import json
+import signal
 import textwrap
 import time
 from collections.abc import Callable, Iterable, Sequence
-from threading import Event
+from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
@@ -51,6 +52,9 @@ def chat_ui(
     title="Generative AI Toolkit",
 ):
 
+    _stop_events: set[Event] = set()
+    _stop_events_lock = Lock()
+
     def ensure_agent_instance(conversation_id: str | None = None):
         if isinstance(agent, Agent):
             agent_instance = agent
@@ -75,19 +79,26 @@ def chat_ui(
 
     ensure_running_event_loop()
 
-    def user_submit(user_input: str, messages: list[gr.MessageDict]):
+    def user_submit(user_input: str | None, messages: list[gr.MessageDict]):
+        if user_input:
+            messages = [
+                *messages,
+                gr.MessageDict(
+                    role="user", content=user_input, metadata={"title": "User"}
+                ),
+            ]
+
+        stop_event = Event()
+        with _stop_events_lock:
+            _stop_events.add(stop_event)
+
         return (
             gr.update(
                 value="", interactive=False, submit_btn=False, stop_btn=True
             ),  # clear textbox
-            user_input,
-            Event(),
-            messages
-            + [
-                gr.MessageDict(
-                    role="user", content=user_input, metadata={"title": "User"}
-                )
-            ],
+            user_input or None,  # Prefer None over empty string
+            stop_event,
+            messages,
         )
 
     def describe_conversation(conversation_id: str, chatbot: list[gr.MessageDict]):
@@ -109,6 +120,12 @@ def chat_ui(
         )
         return conversation.description
 
+    def cleanup_stop_event(stop_event: Event | None):
+        """Remove stop event from tracking set after response completes"""
+        if stop_event:
+            with _stop_events_lock:
+                _stop_events.discard(stop_event)
+
     def user_stop(stop_event: Event | None):
         if stop_event:
             stop_event.set()
@@ -117,23 +134,22 @@ def chat_ui(
     def assistant_stream(
         conversation_id: str,
         traces_state: list[Trace],
-        user_input: str,
+        user_input: str | None,
         stop_event: Event | None,
         yield_snapshot_every=0.25,
     ):
         current_agent_instance = ensure_agent_instance(conversation_id)
-        if not user_input:
-            yield traces_state
-            return
 
         last_snapshot_yielded = 0.0
         traces: dict[str, Trace] = {trace.span_id: trace for trace in traces_state}
         for trace in current_agent_instance.converse_stream(
             user_input, stream="traces", stop_event=stop_event
         ):
+            trace_update = trace.span_id in traces
             traces[trace.span_id] = trace
             if (
-                not trace.ended_at
+                trace_update
+                and not trace.ended_at
                 and trace.attributes.get("ai.trace.type") == "llm-invocation"
             ):
                 # Throttle display of snapshots for LLM invocations only.
@@ -613,6 +629,8 @@ def chat_ui(
             get_conversation_list,
             outputs=[conversation_list_current_page],
             queue=True,
+        ).then(
+            cleanup_stop_event, inputs=[stop_event], outputs=[stop_event]
         )
 
         msg.stop(user_stop, inputs=[stop_event], outputs=[msg])
@@ -687,6 +705,21 @@ def chat_ui(
             inputs=[conversation_id],
             js=js_set_conversation_id_as_query_param,
         )
+
+        def cleanup_on_server_shutdown(signum, frame):
+            """Set all stop events when server receives SIGINT (CTRL-C)"""
+            # Clean up all in-flight requests
+            with _stop_events_lock:
+                for event in _stop_events:
+                    event.set()
+                _stop_events.clear()
+
+            # Restore default SIGINT handler and re-raise to allow normal shutdown
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            raise KeyboardInterrupt
+
+        # Handle server shutdown (CTRL-C)
+        signal.signal(signal.SIGINT, cleanup_on_server_shutdown)
 
         return demo
 

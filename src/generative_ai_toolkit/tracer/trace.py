@@ -196,7 +196,7 @@ class Trace:
     def duration_ms(self) -> int:
         if not self.ended_at:
             raise ValueError("Span has not ended yet")
-        return int((self.ended_at - self.started_at).total_seconds() * 1000)
+        return round((self.ended_at - self.started_at).total_seconds() * 1000)
 
     def add_attribute(
         self,
@@ -312,6 +312,7 @@ class Trace:
                 "ai.trace.type",
                 "peer.service",
                 "ai.conversation.id",
+                "ai.subcontext.id",
             ]
             if attr_name in attributes
         }

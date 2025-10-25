@@ -14,7 +14,8 @@
 
 import os
 import sqlite3
-from collections.abc import Sequence
+import threading
+from collections.abc import Hashable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Unpack
@@ -33,6 +34,7 @@ from generative_ai_toolkit.utils.ulid import Ulid
 
 
 class ConversationHistory(Protocol):
+
     @property
     def conversation_id(self) -> str:
         """
@@ -40,9 +42,31 @@ class ConversationHistory(Protocol):
         """
         ...
 
-    def set_conversation_id(self, conversation_id: str) -> None:
+    @property
+    def subcontext_id(self) -> str | None:
         """
-        Set the current conversation id
+        The current subcontext id (if any).
+
+        Within an end-to-end conversation with a user (identified by the externally known conversation id), a supervisor agent may initiate sub-conversations with other agents.
+        Those sub-conversations share the same conversation id, but must be distinguished from each other (see example below). For for this, the subcontext_id is used.
+
+        Consider the example of a supervisor agent that uses a web research agent. The supervisor may wish to execute multiple distinct web research activities.
+        Thus, it may invoke the web research agent multiple times. Each invocation must have its own conversational memory, because:
+
+        - The invocations may be in parallel, and sharing conversational memory would lead to a mix up of messages
+        - Even if not parallel, subsequent invocations shouldn't (per se) be burdened by carrying the conversational history of prior invocations.
+
+        By using a unique subcontext_id for each subagent invocation, the conversational messages (between supervisor and subagent) of that invocation can be kept separate.
+        This does mean that subagents must return the subcontext_id as metadata together with their response, so that the supervisor agent can provide it alongside follow up questions/instructions.
+        Such follow up questions/instructions **should** of course use the conversational history of the prior invocation (or the subagent wouldn't understand them).
+        """
+        ...
+
+    def set_conversation_id(
+        self, conversation_id: str, *, subcontext_id: str | None = None
+    ) -> None:
+        """
+        Set the current conversation id and subcontext_id (if any).
         """
         ...
 
@@ -56,6 +80,15 @@ class ConversationHistory(Protocol):
     def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         """
         Set the current auth context
+        """
+        ...
+
+    @property
+    def context_key(self) -> Hashable:
+        """
+        Unique reference to the current context that consists of the auth_context, conversation_id, subcontext_id (if any),
+        and any other identifiers the implementation wishes to add to be able to uniquely reference a context
+        across all instances of the ConversationHistory implementation.
         """
         ...
 
@@ -79,24 +112,27 @@ class ConversationHistory(Protocol):
         ...
 
 
-class InMemoryConversationHistory(ConversationHistory):
-    _conversation_id: str
-    _message_cache: dict[str | None, dict[str, list["MessageUnionTypeDef"]]]
-    _auth_context: AuthContext
+class BaseConversationHistory(ConversationHistory):
 
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self) -> None:
+        super().__init__()
         self._conversation_id = Ulid().ulid
-        self._auth_context = {"principal_id": None}
-        self._message_cache = {}
+        self._subcontext_id = None
+        self._auth_context: AuthContext = {"principal_id": None}
 
     @property
-    def conversation_id(self):
+    def conversation_id(self) -> str:
         return self._conversation_id
 
-    def set_conversation_id(self, conversation_id: str):
+    @property
+    def subcontext_id(self) -> str | None:
+        return self._subcontext_id
+
+    def set_conversation_id(
+        self, conversation_id: str, *, subcontext_id: str | None = None
+    ) -> None:
         self._conversation_id = conversation_id
+        self._subcontext_id = subcontext_id
 
     @property
     def auth_context(self) -> AuthContext:
@@ -105,22 +141,60 @@ class InMemoryConversationHistory(ConversationHistory):
     def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
         self._auth_context = auth_context
 
-    def add_message(self, msg: "MessageUnionTypeDef") -> None:
-        self._message_cache.setdefault(
-            self._auth_context["principal_id"], {}
-        ).setdefault(self._conversation_id, []).append(msg)
+    @property
+    def context_key(self) -> Hashable:
+        return (
+            self._auth_context["principal_id"],
+            self._conversation_id,
+            self._subcontext_id,
+        )
 
     @property
     def messages(self) -> Sequence["MessageUnionTypeDef"]:
-        return self._message_cache.get(self._auth_context["principal_id"], {}).get(
-            self._conversation_id, []
-        )
+        raise NotImplementedError
+
+    def add_message(self, msg: "MessageUnionTypeDef") -> None:
+        raise NotImplementedError
 
     def reset(self) -> None:
         self._conversation_id = Ulid().ulid
+        self._subcontext_id = None
 
 
-class SqliteConversationHistory(ConversationHistory):
+class InMemoryConversationHistory(BaseConversationHistory):
+    _message_cache: dict[
+        str | None, dict[str, dict[str | None, list["MessageUnionTypeDef"]]]
+    ]
+
+    def __init__(
+        self,
+    ) -> None:
+        super().__init__()
+        self._message_cache = {}
+
+    @property
+    def context_key(self) -> Hashable:
+        return (id(self), super().context_key)
+
+    def add_message(self, msg: "MessageUnionTypeDef") -> None:
+        self._message_cache.setdefault(
+            self._auth_context["principal_id"], {}
+        ).setdefault(self._conversation_id, {}).setdefault(
+            self._subcontext_id, []
+        ).append(
+            msg
+        )
+
+    @property
+    def messages(self) -> Sequence["MessageUnionTypeDef"]:
+        return (
+            self._message_cache.get(self._auth_context["principal_id"], {})
+            .get(self._conversation_id, {})
+            .get(self._subcontext_id, [])
+        )
+
+
+class SqliteConversationHistory(BaseConversationHistory):
 
     def __init__(
         self,
@@ -129,15 +203,13 @@ class SqliteConversationHistory(ConversationHistory):
         identifier: str | None = None,
         create_tables: bool = True,
     ):
+        super().__init__()
         self.db_path = (
             Path(db_path)
             if db_path is not None
             else Path(os.getcwd()) / "conversations.db"
         )
         self.identifier = identifier
-        self._conversation_id = Ulid().ulid
-        self._auth_context: AuthContext = {"principal_id": None}
-
         if create_tables:
             self._create_tables()
 
@@ -149,6 +221,7 @@ class SqliteConversationHistory(ConversationHistory):
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL,
                     identifier TEXT,
+                    subcontext_id TEXT,
                     timestamp_ms INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     role TEXT NOT NULL,
@@ -160,7 +233,7 @@ class SqliteConversationHistory(ConversationHistory):
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation
-                ON messages (conversation_id, identifier, timestamp_ms)
+                ON messages (conversation_id, identifier, subcontext_id, timestamp_ms)
                 """
             )
 
@@ -170,18 +243,8 @@ class SqliteConversationHistory(ConversationHistory):
         return f"SqliteConversationHistory(db_path={self.db_path}, identifier={self.identifier})"
 
     @property
-    def conversation_id(self) -> str:
-        return self._conversation_id
-
-    def set_conversation_id(self, conversation_id: str) -> None:
-        self._conversation_id = conversation_id
-
-    @property
-    def auth_context(self) -> AuthContext:
-        return self._auth_context
-
-    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
-        self._auth_context = auth_context
+    def context_key(self) -> Hashable:
+        return (self.db_path, super().context_key)
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
         now = datetime.now(UTC)
@@ -191,12 +254,13 @@ class SqliteConversationHistory(ConversationHistory):
             conn.execute(
                 """
                 INSERT INTO messages
-                (conversation_id, identifier, timestamp_ms, created_at, role, content)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (conversation_id, identifier, subcontext_id, timestamp_ms, created_at, role, content)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self._conversation_id,
                     self.identifier,
+                    self._subcontext_id,
                     timestamp_ms,
                     now.isoformat(),
                     msg["role"],
@@ -216,12 +280,15 @@ class SqliteConversationHistory(ConversationHistory):
                 FROM messages
                 WHERE conversation_id = ?
                     AND (identifier IS ? OR (identifier IS NULL AND ? IS NULL))
+                    AND (subcontext_id IS ? OR (subcontext_id IS NULL AND ? IS NULL))
                 ORDER BY timestamp_ms ASC
                 """,
                 (
                     self._conversation_id,
                     self.identifier,
                     self.identifier,
+                    self._subcontext_id,
+                    self._subcontext_id,
                 ),
             )
 
@@ -237,13 +304,8 @@ class SqliteConversationHistory(ConversationHistory):
 
             return messages
 
-    def reset(self) -> None:
-        self._conversation_id = Ulid().ulid
 
-
-class DynamoDbConversationHistory(ConversationHistory):
-    _conversation_id: str
-    _auth_context: AuthContext
+class DynamoDbConversationHistory(BaseConversationHistory):
 
     def __init__(
         self,
@@ -252,35 +314,59 @@ class DynamoDbConversationHistory(ConversationHistory):
         session: boto3.session.Session | None = None,
         identifier: str | None = None,
     ) -> None:
-        self.table = (session or boto3).resource("dynamodb").Table(table_name)
-        self._conversation_id = Ulid().ulid
-        self._auth_context = {"principal_id": None}
+        super().__init__()
+        self.table_name = table_name
+        self.session = session
+        self._locals = threading.local()
+        if identifier is not None and "#" in identifier:
+            raise ValueError(
+                "DynamoDbConversationHistory cannot use # character in identifier"
+            )
         self.identifier = identifier
 
+    @property
+    def table(self):
+        """Thread-local Table resource for thread safety"""
+        if not hasattr(self._locals, "table"):
+            self._locals.table = (
+                (self.session or boto3).resource("dynamodb").Table(self.table_name)
+            )
+        return self._locals.table
+
     def __repr__(self) -> str:
-        return f"DynamoDbConversationHistory(table_name={self.table.name}, identifier={self.identifier})"
-
-    @property
-    def conversation_id(self) -> str:
-        return self._conversation_id
-
-    def set_conversation_id(self, conversation_id: str):
-        self._conversation_id = conversation_id
-
-    @property
-    def auth_context(self) -> AuthContext:
-        return self._auth_context
+        return f"DynamoDbConversationHistory(table_name={self.table_name}, identifier={self.identifier})"
 
     def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
-        self._auth_context = auth_context
+        principal_id = auth_context.get("principal_id")
+        if principal_id and isinstance(principal_id, str) and "#" in principal_id:
+            raise ValueError(
+                "DynamoDbConversationHistory cannot use # character in principal_id"
+            )
+        super().set_auth_context(**auth_context)
+
+    def set_conversation_id(
+        self, conversation_id: str, *, subcontext_id: str | None = None
+    ) -> None:
+        if "#" in conversation_id or (
+            subcontext_id is not None and "#" in subcontext_id
+        ):
+            raise ValueError(
+                "DynamoDbConversationHistory cannot use # character in conversation_id or subcontext_id"
+            )
+        super().set_conversation_id(conversation_id, subcontext_id=subcontext_id)
+
+    @property
+    def context_key(self) -> Hashable:
+        return (self.table.table_arn, self.identifier, super().context_key)
 
     def add_message(self, msg: "MessageUnionTypeDef") -> None:
         now = datetime.now(UTC)
         item = {
-            "pk": f"CONV#{self._auth_context["principal_id"] or "_"}#{self.conversation_id}",
-            "sk": f"MSG#{self.identifier or "_"}#{int(now.timestamp() * 1000):014x}",
+            "pk": f"CONV#{self._auth_context["principal_id"] or "_"}#{self._conversation_id}",
+            "sk": f"MSG#{self.identifier or "_"}#{self._subcontext_id or "_"}#{int(now.timestamp() * 1000):014x}",
             "created_at": now.isoformat(),
-            "conversation_id": self.conversation_id,
+            "conversation_id": self._conversation_id,
+            "subcontext_id": self._subcontext_id,
             "role": msg["role"],
             "content": msg["content"],
             "auth_context": self._auth_context,
@@ -306,9 +392,11 @@ class DynamoDbConversationHistory(ConversationHistory):
             try:
                 response = self.table.query(
                     KeyConditionExpression=Key("pk").eq(
-                        f"CONV#{self._auth_context["principal_id"] or "_"}#{self.conversation_id}"
+                        f"CONV#{self._auth_context["principal_id"] or "_"}#{self._conversation_id}"
                     )
-                    & Key("sk").begins_with(f"MSG#{self.identifier or "_"}#"),
+                    & Key("sk").begins_with(
+                        f"MSG#{self.identifier or "_"}#{self._subcontext_id or "_"}#"
+                    ),
                     **last_evaluated_key_param,
                     ConsistentRead=True,
                 )
@@ -328,6 +416,3 @@ class DynamoDbConversationHistory(ConversationHistory):
             last_evaluated_key_param = {
                 "ExclusiveStartKey": response["LastEvaluatedKey"]
             }
-
-    def reset(self) -> None:
-        self._conversation_id = Ulid().ulid

@@ -301,6 +301,54 @@ print(len(agent.messages)) # 0
 print(agent.conversation_id)  # e.g.: "01J5DQRD864TR3BF314CZK8X5B" (changed)
 ```
 
+##### Subcontexts
+
+Typically, a conversation (identified by the conversation id) and the "context", i.e. the messages sent back and forth to the LLM, are the same. The conversation id is (/may be) externally known, and after you set it on an agent instance with `agent.set_conversation_id(...)`, accessing `agent.messages` only shows the messages of that conversation. If you send a new message to the agent with `agent.converse()` it is added to the conversation, and then sent, with all prior messages (including assistant responses) to the agent: the "context". The context thus keeps growing as the conversation progresses.
+
+But what if, during a larger conversation, you wanted to ask a side question to your agent? What if that side question would not require the full context to be sent to the LLM? What if you wanted to send a smaller more targeted context to the LLM to increase your chances of a good response?
+
+In such cases you could of course start a new conversation all together, by setting a new conversation id. But the side conversation, the "subcontext", is in a way part of the main conversation. You may want it to have the same conversation id, so that it's easy to query and see all the messages for the entire conversation, including its side conversations. For that purpose, you can use a **subcontext**.
+
+This is precisely what is needed in multi-agent scenarios, where a supervisor agent invokes multiple subagents, potentially in parallel. Each subagent invocation should maintain its own independent conversational memory.
+
+**Note:** Subcontexts are managed automatically when you use agents as tools (see [Multi-agent support](#225-multi-agent-support)). The example below is provided to help you understand how subcontexts work, but you typically would not create and manage subcontexts manually like this:
+
+```python
+# No subcontext yet
+agent.set_conversation_id("01J5D9ZNK5XKZX472HC81ZYR5Z")
+agent.converse("Hi there!") # This send the message to the LLM and collects the agent's response
+print(len(agent.messages))  # 2 (user message + agent response)
+
+# Set both conversation ID and subcontext ID
+agent.set_conversation_id("01J5D9ZNK5XKZX472HC81ZYR5Z", subcontext_id="subcontext-123")
+
+# Access the current subcontext ID
+print(agent.subcontext_id)  # "subcontext-123"
+print(len(agent.messages))  # 0 (fresh conversational memory in this subcontext)
+
+# Have a conversation in this subcontext
+agent.converse("My favorite color is blue")
+print(len(agent.messages))  # 2 (user message + agent response)
+
+# Switch to a different subcontext within the same conversation
+agent.set_conversation_id("01J5D9ZNK5XKZX472HC81ZYR5Z", subcontext_id="subcontext-456")
+print(len(agent.messages))  # 0 (fresh conversational memory in this subcontext)
+
+# This subcontext has its own separate history
+agent.converse("My favorite color is red")
+print(len(agent.messages))  # 2
+
+# Switch back to the first subcontext
+agent.set_conversation_id("01J5D9ZNK5XKZX472HC81ZYR5Z", subcontext_id="subcontext-123")
+print(len(agent.messages))  # 2 (the original messages about blue are still here)
+```
+
+Subcontexts allow:
+
+- Parallel subagent invocations with separate memory
+- Sequential subagent invocations without carrying over prior messages
+- Follow-up messages to the same subagent using the same subcontext ID
+
 ##### Multi-modal messages
 
 To send multi-modal messages (image, video, documents) to the agent, use `add_message()` on the agent's conversation history:
@@ -904,45 +952,49 @@ So, for example, when a user sends a message to an agent, that will start a trac
 
 In the OpenTelemetry Span model, information such as "the model ID used for the LLM invocation" must be added to a span as attributes. The Generative AI Toolkit uses the following span attributes:
 
-| Attribute Name                                         | Description                                                                                                                                                                                       |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ai.trace.type`                                        | Used to identify the type of trace operation being performed. Values: "conversation-history-list", "conversation-history-add", "converse", "converse-stream", "tool-invocation", "llm-invocation" |
-| `ai.conversation.history.implementation`               | The string representation of the conversation history implementation being used (e.g. the name of the Python class)                                                                               |
-| `peer.service`                                         | Indicates the service being interacted with. Values: "memory:short-term", "tool:{tool_name}", "llm:{model_id}"                                                                                    |
-| `ai.conversation.history.messages`                     | Contains the messages from the conversation history                                                                                                                                               |
-| `ai.conversation.history.message`                      | Contains a single message being added to the conversation history                                                                                                                                 |
-| `ai.conversation.id`                                   | The unique identifier for the conversation (inheritable attribute)                                                                                                                                |
-| `ai.auth.context`                                      | The authentication context for the conversation (inheritable attribute)                                                                                                                           |
-| `ai.tool.name`                                         | Name of the tool being invoked                                                                                                                                                                    |
-| `ai.tool.use.id`                                       | Unique identifier for the tool usage                                                                                                                                                              |
-| `ai.tool.input`                                        | The input parameters provided to the tool                                                                                                                                                         |
-| `ai.tool.output`                                       | The response/output from the tool invocation                                                                                                                                                      |
-| `ai.tool.error`                                        | Error information if tool invocation fails                                                                                                                                                        |
-| `ai.tool.error.traceback`                              | Full Python traceback information when tool invocation fails                                                                                                                                      |
-| `ai.user.input`                                        | The input provided by the user in the conversation                                                                                                                                                |
-| `ai.llm.request.inference.config`                      | Configuration settings for the LLM inference                                                                                                                                                      |
-| `ai.llm.request.messages`                              | Messages being sent to the LLM                                                                                                                                                                    |
-| `ai.llm.request.model.id`                              | Identifier of the LLM model being used                                                                                                                                                            |
-| `ai.llm.request.system`                                | System prompt or configuration being sent to the LLM                                                                                                                                              |
-| `ai.llm.request.tool.config`                           | Tool configuration being sent to the LLM                                                                                                                                                          |
-| `ai.llm.request.guardrail.config`                      | Configuration for a guardrail applied during the request. It restricts or modifies the content in messages based on configured criteria.                                                          |
-| `ai.llm.request.additional.model.request.fields`       | Additional inference parameters specific to the chosen model that extend the standard inference configuration options.                                                                            |
-| `ai.llm.request.additional.model.response.field.paths` | Specifies additional fields from the model's response to include explicitly, identified by JSON Pointer paths.                                                                                    |
-| `ai.llm.request.prompt.variables`                      | Variables defined in a prompt resource, mapped to values provided at runtime, used to dynamically customize prompts.                                                                              |
-| `ai.llm.request.request.metadata`                      | Custom key-value pairs included for metadata purposes, primarily for filtering and analyzing invocation logs.                                                                                     |
-| `ai.llm.request.performance.config`                    | Configuration that specifies performance-related settings, such as latency and resource allocation, tailored for specific model invocations.                                                      |
-| `ai.llm.response.output`                               | Output received from the LLM                                                                                                                                                                      |
-| `ai.llm.response.stop.reason`                          | Reason why the LLM stopped generating                                                                                                                                                             |
-| `ai.llm.response.usage`                                | Usage metrics from the LLM response                                                                                                                                                               |
-| `ai.llm.response.metrics`                              | Additional metrics from the LLM response                                                                                                                                                          |
-| `ai.llm.response.error`                                | Error information if the LLM request fails                                                                                                                                                        |
-| `ai.llm.response.trace`                                | Trace information                                                                                                                                                                                 |
-| `ai.llm.response.performance.config`                   | The performance config                                                                                                                                                                            |
-| `ai.agent.response`                                    | The final concatenated response from the agent                                                                                                                                                    |
-| `ai.agent.cycle.nr`                                    | The cycle number during agent conversation processing, indicating which iteration of the conversation loop is being executed                                                                      |
-| `ai.agent.cycle.response`                              | The agent's response text for a specific cycle/iteration during conversation processing                                                                                                           |
-| `ai.conversation.aborted`                              | Boolean flag indicating whether the conversation was aborted due to a stop event                                                                                                                  |
-| `service.name`                                         | Name of the service, set to the class name of the agent                                                                                                                                           |
+| Attribute Name                                         | Description                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ai.trace.type`                                        | Used to identify the type of trace operation being performed. Values: "conversation-history-list", "conversation-history-add", "converse", "converse-stream", "tool-invocation", "llm-invocation"                                                                                  |
+| `ai.conversation.history.implementation`               | The string representation of the conversation history implementation being used (e.g. the name of the Python class)                                                                                                                                                                |
+| `peer.service`                                         | Indicates the service being interacted with. Values: "memory:short-term", "tool:{tool_name}", "llm:{model_id}"                                                                                                                                                                     |
+| `ai.conversation.history.messages`                     | Contains the messages from the conversation history                                                                                                                                                                                                                                |
+| `ai.conversation.history.message`                      | Contains a single message being added to the conversation history                                                                                                                                                                                                                  |
+| `ai.conversation.id`                                   | The unique identifier for the conversation (inheritable attribute)                                                                                                                                                                                                                 |
+| `ai.subcontext.id`                                     | The subcontext identifier for the conversation, used when agents or tools need to maintain separate conversational memory within the same overall conversation (inheritable attribute)                                                                                             |
+| `ai.auth.context`                                      | The authentication context for the conversation (inheritable attribute)                                                                                                                                                                                                            |
+| `ai.agent.name`                                        | The name of the agent, set when an agent is instantiated with a name parameter (inheritable attribute)                                                                                                                                                                             |
+| `ai.tool.name`                                         | Name of the tool being invoked                                                                                                                                                                                                                                                     |
+| `ai.tool.use.id`                                       | Unique identifier for the tool usage                                                                                                                                                                                                                                               |
+| `ai.tool.input`                                        | The input parameters provided to the tool                                                                                                                                                                                                                                          |
+| `ai.tool.output`                                       | The response/output from the tool invocation                                                                                                                                                                                                                                       |
+| `ai.tool.error`                                        | Error information if tool invocation fails                                                                                                                                                                                                                                         |
+| `ai.tool.error.traceback`                              | Full Python traceback information when tool invocation fails                                                                                                                                                                                                                       |
+| `ai.tool.subagent.subcontext.id`                       | Identifier of the subcontext when a subagent is invoked as a tool. This allows the subagent to maintain its conversational memory per subcontext, so that the subagent e.g. may be invoked in parallel with different inputs, or sequentially without carrying over prior messages |
+| `ai.user.input`                                        | The input provided by the user in the conversation                                                                                                                                                                                                                                 |
+| `ai.llm.request.inference.config`                      | Configuration settings for the LLM inference                                                                                                                                                                                                                                       |
+| `ai.llm.request.messages`                              | Messages being sent to the LLM                                                                                                                                                                                                                                                     |
+| `ai.llm.request.model.id`                              | Identifier of the LLM model being used                                                                                                                                                                                                                                             |
+| `ai.llm.request.system`                                | System prompt or configuration being sent to the LLM                                                                                                                                                                                                                               |
+| `ai.llm.request.tool.config`                           | Tool configuration being sent to the LLM                                                                                                                                                                                                                                           |
+| `ai.llm.request.guardrail.config`                      | Configuration for a guardrail applied during the request. It restricts or modifies the content in messages based on configured criteria.                                                                                                                                           |
+| `ai.llm.request.additional.model.request.fields`       | Additional inference parameters specific to the chosen model that extend the standard inference configuration options.                                                                                                                                                             |
+| `ai.llm.request.additional.model.response.field.paths` | Specifies additional fields from the model's response to include explicitly, identified by JSON Pointer paths.                                                                                                                                                                     |
+| `ai.llm.request.prompt.variables`                      | Variables defined in a prompt resource, mapped to values provided at runtime, used to dynamically customize prompts.                                                                                                                                                               |
+| `ai.llm.request.request.metadata`                      | Custom key-value pairs included for metadata purposes, primarily for filtering and analyzing invocation logs.                                                                                                                                                                      |
+| `ai.llm.request.performance.config`                    | Configuration that specifies performance-related settings, such as latency and resource allocation, tailored for specific model invocations.                                                                                                                                       |
+| `ai.llm.response.output`                               | Output received from the LLM                                                                                                                                                                                                                                                       |
+| `ai.llm.response.stop.reason`                          | Reason why the LLM stopped generating                                                                                                                                                                                                                                              |
+| `ai.llm.response.usage`                                | Usage metrics from the LLM response                                                                                                                                                                                                                                                |
+| `ai.llm.response.metrics`                              | Additional metrics from the LLM response                                                                                                                                                                                                                                           |
+| `ai.llm.response.error`                                | Error information if the LLM request fails                                                                                                                                                                                                                                         |
+| `ai.llm.response.trace`                                | Trace information                                                                                                                                                                                                                                                                  |
+| `ai.llm.response.performance.config`                   | The performance config                                                                                                                                                                                                                                                             |
+| `ai.llm.response.stream.events`                        | Counter tracking the number of stream events processed during LLM response streaming. Incremented for each event in the stream (e.g., contentBlockStart, contentBlockDelta, metadata, etc.)                                                                                        |
+| `ai.agent.response`                                    | The final concatenated response from the agent                                                                                                                                                                                                                                     |
+| `ai.agent.cycle.nr`                                    | The cycle number during agent conversation processing, indicating which iteration of the conversation loop is being executed                                                                                                                                                       |
+| `ai.agent.cycle.response`                              | The agent's response text for a specific cycle/iteration during conversation processing                                                                                                                                                                                            |
+| `ai.conversation.aborted`                              | Boolean flag indicating whether the conversation was aborted due to a stop event                                                                                                                                                                                                   |
+| `service.name`                                         | Name of the service, set to the class name of the agent                                                                                                                                                                                                                            |
 
 ##### Viewing traces
 

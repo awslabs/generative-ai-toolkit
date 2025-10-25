@@ -16,10 +16,11 @@ import inspect
 import re
 import textwrap
 from collections.abc import Callable
-from types import UnionType
+from types import NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     Protocol,
     Union,
     get_args,
@@ -161,6 +162,10 @@ class BedrockConverseTool(Tool):
                 )
             if param.annotation is inspect.Parameter.empty:
                 raise ValueError(f"Parameter '{name}' must be annotated with a type.")
+
+            # Extract literal values if this is a Literal type
+            literal_values = self._extract_literal_values(param.annotation)
+
             parameters[name] = {
                 "annotation": param.annotation,
                 "default": (
@@ -169,6 +174,7 @@ class BedrockConverseTool(Tool):
                     else None
                 ),
                 "description": param_descriptions[name],
+                "literal_values": literal_values,
             }
         return parameters, [
             param.name
@@ -220,7 +226,7 @@ class BedrockConverseTool(Tool):
             # [ \t]+ - followed by at least one space or tab (the description indent)
             # This removes "    " (param indent) + " " (desc indent) from each line
             desc_block = re.sub(
-                rf'(?m)^(?:{re.escape(m.group("indent"))}[ \t]+)',
+                rf"(?m)^(?:{re.escape(m.group('indent'))}[ \t]+)",
                 "",  # Replace with empty string (remove the indentation)
                 desc_block,
             )
@@ -229,6 +235,29 @@ class BedrockConverseTool(Tool):
             results[name] = desc_block.strip()
 
         return results
+
+    def _extract_literal_values(self, python_type: Any) -> list[Any] | None:
+        """
+        Extract literal values from a Literal type annotation.
+        Handles Optional[Literal[...]] and Literal[...] | None patterns.
+        Returns None if not a Literal type.
+        """
+        origin = get_origin(python_type)
+
+        # Check if it's a Literal type directly
+        if origin is Literal:
+            return list(get_args(python_type))
+
+        # Check if it's an Optional[Literal[...]] or Literal[...] | None
+        if origin in (UnionType, Union):
+            args = get_args(python_type)
+            # Filter out None types
+            not_none = [t for t in args if t is not NoneType]
+            # If there's exactly one non-None type and it's a Literal
+            if len(not_none) == 1 and get_origin(not_none[0]) is Literal:
+                return list(get_args(not_none[0]))
+
+        return None
 
     @property
     def tool_spec(self) -> "ToolSpecificationTypeDef":
@@ -240,9 +269,22 @@ class BedrockConverseTool(Tool):
     def create_tool_spec(self) -> "ToolSpecificationTypeDef":
         properties = {}
         for name, details in self.parameters.items():
+            description = details["description"]
+
+            # If this parameter has literal values, append them to the description
+            if details.get("literal_values"):
+                literal_values = details["literal_values"]
+                # Format the values nicely (with quotes for strings)
+                formatted_values = ", ".join(
+                    f'"{v}"' if isinstance(v, str) else str(v) for v in literal_values
+                )
+                description = (
+                    f"{description.rstrip()}\n\nAllowed values: {formatted_values}"
+                )
+
             properties[name] = {
                 "type": self._python_type_to_json_type(details["annotation"]),
-                "description": details["description"],
+                "description": description,
             }
         json = {
             "type": "object",
@@ -257,29 +299,49 @@ class BedrockConverseTool(Tool):
             json["required"] = self.required_parameters
         return tool_spec
 
-    def _python_type_to_json_type(self, python_type: Any) -> str:
+    def _python_type_to_json_type(self, python_type: Any) -> str:  # noqa: PLR0911
         origin = get_origin(python_type)
 
-        # Handle optionality unions, e.g. List[str] | None
+        # Handle optional unions like str | None
         if origin in (UnionType, Union):
-            not_none = [t for t in get_args(python_type) if t is not type(None)]
+            not_none = [t for t in get_args(python_type) if t is not NoneType]
             if len(not_none) == 1:
                 return self._python_type_to_json_type(not_none[0])
             raise ValueError(f"Unsupported union type: {python_type}")
+
+        # Handle Literal types - infer base type from first literal value
+        if origin is Literal:
+            literal_values = get_args(python_type)
+            if not literal_values:
+                raise ValueError(f"Literal type has no values: {python_type}")
+            first_value = literal_values[0]
+            if isinstance(first_value, bool):
+                return "boolean"
+            elif isinstance(first_value, int):
+                return "integer"
+            elif isinstance(first_value, str):
+                return "string"
+            elif isinstance(first_value, float):
+                return "number"
+            else:
+                raise ValueError(f"Unsupported literal value type: {type(first_value)}")
 
         primitives = {
             int: "integer",
             bool: "boolean",
             str: "string",
             float: "number",
+            NoneType: "null",
         }
-        if origin is None and python_type in primitives:
+
+        # Handle primitive types
+        if python_type in primitives:
             return primitives[python_type]
-        elif origin is list:
+
+        # Handle collection generics
+        if origin in (list, tuple) or python_type in (list, tuple):
             return "array"
-        elif origin is tuple:
-            return "array"
-        elif origin is dict:
+        if origin is dict or python_type is dict:
             return "object"
-        else:
-            raise ValueError(f"Unsupported type: {python_type}")
+
+        raise ValueError(f"Unsupported type: {python_type}")

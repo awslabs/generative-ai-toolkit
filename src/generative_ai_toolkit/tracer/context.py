@@ -39,6 +39,12 @@ class TraceContext:
     resource_attributes: Mapping[str, Any] = field(default_factory=dict)
     span_attributes: Mapping[str, Any] = field(default_factory=dict)
 
+    def keys(self):
+        return self.__dataclass_fields__.keys()
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
 
 class TraceContextProvider(Protocol):
 

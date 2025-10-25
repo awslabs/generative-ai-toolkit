@@ -42,7 +42,7 @@ class TraceSummary:
     duration_ms: int | None
     conversation_id: str
     auth_context: AuthContext = field(default_factory=lambda: {"principal_id": None})
-    user_input: str = ""
+    user_input: str | None = None
     agent_cycle_traces: dict[str, Trace] = field(default_factory=dict)
     all_traces: list[Trace] = field(default_factory=list)
     measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
@@ -379,17 +379,20 @@ def chat_messages_from_trace_summary(
 ):
     chat_messages: list[gr.ChatMessage] = []
     summary_duration: MetadataDict = (
-        {"duration": summary.duration_ms / 1000} if summary.duration_ms else {}
+        {"duration": summary.duration_ms / 1000}
+        if summary.duration_ms is not None
+        else {}
     )
-    chat_messages.append(
-        gr.ChatMessage(
-            role="user",
-            content=EscapeHtml.escape_html_except_code(
-                summary.user_input, code_fence_style="backtick"
+    if summary.user_input:
+        chat_messages.append(
+            gr.ChatMessage(
+                role="user",
+                content=EscapeHtml.escape_html_except_code(
+                    summary.user_input, code_fence_style="backtick"
+                ),
+                metadata={"title": "User", **summary_duration},
             ),
-            metadata={"title": "User", **summary_duration},
-        ),
-    )
+        )
     subagent_errors: list[Trace] = []
     if include_traces != "CONVERSATION_ONLY":
         for trace in summary.all_traces:
@@ -419,8 +422,10 @@ def chat_messages_from_trace_summary(
             elif trace.attributes.get("ai.trace.type") == "tool-invocation":
                 if "ai.tool.error" in trace.attributes:
                     metadata.pop("status", None)
-                if "ai.tool.subagent" in trace.attributes:
-                    metadata["title"] = f"subagent:{trace.attributes['ai.tool.name']}"
+                if "ai.tool.subagent.subcontext.id" in trace.attributes:
+                    metadata["title"] = (
+                        f"subagent:{trace.attributes['ai.tool.name']}[subcontext={trace.attributes["ai.tool.subagent.subcontext.id"]}]"
+                    )
                     if not trace.ended_at:
                         metadata["status"] = "pending"
                 else:
@@ -442,21 +447,44 @@ def chat_messages_from_trace_summary(
                         role="assistant",
                         content=(
                             get_markdown_for_tool_invocation(trace)
-                            if "ai.tool.subagent" not in trace.attributes
+                            if "ai.tool.subagent.subcontext.id" not in trace.attributes
                             else ""  # subagent messages show inline nested (through metadata parent_id)
                         ),
                         metadata=metadata,
                     )
                 )
                 if (
-                    "ai.tool.subagent" in trace.attributes
+                    "ai.tool.subagent.subcontext.id" in trace.attributes
                     and "ai.tool.error" in trace.attributes
                 ):
                     subagent_errors.append(trace)
 
             # LLM invocations
             elif trace.attributes.get("ai.trace.type") == "llm-invocation":
+                if "ai.llm.response.stream.events" in trace.attributes:
+                    nr_stream_events = trace.attributes["ai.llm.response.stream.events"]
+                    title_texts = [f"{nr_stream_events}"]
+                    if (
+                        "ai.llm.response.output" in trace.attributes
+                        and not trace.ended_at
+                    ):
+                        llm_response = trace.attributes["ai.llm.response.output"]
+                        content_blocks = llm_response.get("message", {}).get("content")
+                        last_content_block = (
+                            list(content_blocks)[-1] if content_blocks else None
+                        )
+                        if last_content_block:
+                            if "toolUse" in last_content_block:
+                                title_texts.append(
+                                    f"tool:{last_content_block["toolUse"]["name"]}"
+                                )
+                            else:
+                                title_texts.append(
+                                    next(iter(last_content_block.keys()))
+                                )
+                    metadata["title"] += f"[{':'.join(title_texts)}]"
                 if "ai.llm.response.error" in trace.attributes:
+                    # Fold open
                     metadata.pop("status", None)
                 chat_messages.append(
                     gr.ChatMessage(

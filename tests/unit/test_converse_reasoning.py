@@ -14,7 +14,7 @@
 
 import textwrap
 
-from generative_ai_toolkit.agent.agent import BedrockConverseAgent
+from generative_ai_toolkit.agent import BedrockConverseAgent
 
 
 def test_converse_stream_with_manual_mock(

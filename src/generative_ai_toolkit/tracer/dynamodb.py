@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 from collections.abc import Mapping
 from typing import Any
 
@@ -41,10 +42,21 @@ class DynamoDbTracer(BaseTracer):
         conversation_id_gsi_name="by_conversation_id",
     ) -> None:
         super().__init__(trace_context_provider=trace_context_provider)
-        self.table = (session or boto3).resource("dynamodb").Table(table_name)
+        self.table_name = table_name
+        self.session = session
         self.identifier = identifier
         self.ttl = ttl
         self.conversation_id_gsi_name = conversation_id_gsi_name
+        self._locals = threading.local()
+
+    @property
+    def table(self):
+        """Thread-local Table resource for thread safety"""
+        if not hasattr(self._locals, "table"):
+            self._locals.table = (
+                (self.session or boto3).resource("dynamodb").Table(self.table_name)
+            )
+        return self._locals.table
 
     def persist(self, trace: Trace):
         item = {
@@ -72,16 +84,18 @@ class DynamoDbTracer(BaseTracer):
 
         # Maintain as top level attribute for querying with GSI:
         if "ai.conversation.id" in trace.attributes:
-            item["conversation_id"] = trace.attributes["ai.conversation.id"]
+            conversation_id = trace.attributes["ai.conversation.id"]
+            subcontext_id = trace.attributes.get("ai.subcontext.id") or "_"
+            item["conversation_id"] = f"{conversation_id}#{subcontext_id}"
 
         try:
-            with self.lock:
-                self.table.put_item(
-                    Item=DynamoDbMapper.serialize(item),
-                    ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
-                )
+            # No lock needed - table property provides thread-local resource
+            self.table.put_item(
+                Item=DynamoDbMapper.serialize(item),
+                ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
+            )
         except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-            raise ValueError(f"Table {self.table.name} does not exist") from e
+            raise ValueError(f"Table {self.table_name} does not exist") from e
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
             raise ValueError(f"Trace {trace.trace_id} already exists") from e
 
@@ -90,49 +104,76 @@ class DynamoDbTracer(BaseTracer):
         trace_id: str | None = None,
         attribute_filter: Mapping[str, Any] | None = None,
     ):
-        with self.lock:
-            params = {}
-            if trace_id:
-                params["KeyConditionExpression"] = Key("pk").eq(
-                    f"TRACE#{trace_id}"
-                ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
-            elif attribute_filter and "ai.conversation.id" in attribute_filter:
-                params["KeyConditionExpression"] = Key("conversation_id").eq(
-                    attribute_filter["ai.conversation.id"]
-                ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
-                params["IndexName"] = self.conversation_id_gsi_name
-            else:
-                raise ValueError(
-                    "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
-                )
+        # Create shallow copy:
+        attribute_filter = dict(attribute_filter or {})
+        params = {}
+        if trace_id:
+            params["KeyConditionExpression"] = Key("pk").eq(f"TRACE#{trace_id}") & Key(
+                "sk"
+            ).begins_with(f"SPAN#{self.identifier or "_"}#")
+        elif (
+            attribute_filter
+            and "ai.conversation.id" in attribute_filter
+            and "ai.subcontext.id" in attribute_filter
+        ):
+            conversation_id = attribute_filter.pop("ai.conversation.id")
+            subcontext_id = attribute_filter.pop("ai.subcontext.id") or "_"
+            params["KeyConditionExpression"] = Key("conversation_id").eq(
+                f"{conversation_id}#{subcontext_id}"
+            ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
+            params["IndexName"] = self.conversation_id_gsi_name
 
-            items = []
-            last_evaluated_key: dict[str, Any] = {}
-            while True:
-                try:
-                    response = self.table.query(
-                        ScanIndexForward=True,
-                        **params,
-                        **last_evaluated_key,
+            # Build filter expression with proper escaping for dots
+            if attribute_filter:
+                filter_expressions = []
+                expr_attr_names = {}
+                expr_attr_values = {}
+
+                for idx, (key, value) in enumerate(attribute_filter.items()):
+                    # Create unique placeholders
+                    name_placeholder = f"#attr{idx}"
+                    value_placeholder = f":val{idx}"
+
+                    # Store the actual key name (with dots) in ExpressionAttributeNames
+                    expr_attr_names[name_placeholder] = key
+                    expr_attr_values[value_placeholder] = value
+
+                    # Build the expression: attributes.<placeholder> = <value_placeholder>
+                    filter_expressions.append(
+                        f"attributes.{name_placeholder} = {value_placeholder}"
                     )
 
-                except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-                    raise ValueError(f"Table {self.table.name} does not exist") from e
-                items.extend(response["Items"])
-                if "LastEvaluatedKey" not in response:
-                    break
-                last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
+                # Combine all filter expressions with AND
+                params["FilterExpression"] = " AND ".join(filter_expressions)
+                params["ExpressionAttributeNames"] = expr_attr_names
+                params["ExpressionAttributeValues"] = expr_attr_values
+        else:
+            raise ValueError(
+                "To use get_traces() you must either provide trace_id, or attribute_filter with keys 'ai.conversation.id' and 'ai.subcontext.id'"
+            )
 
-            traces: dict[str, Trace] = {}
-            for item in items:
-                trace = self.item_to_trace(item, traces)
-                # Apply "ai.auth.context" filter:
-                if attribute_filter and not all(
-                    k in trace.attributes and trace.attributes[k] == v
-                    for k, v in attribute_filter.items()
-                ):
-                    continue
-                traces[trace.span_id] = trace
+        # No lock needed - table property provides thread-local resource
+        items = []
+        last_evaluated_key: dict[str, Any] = {}
+        while True:
+            try:
+                response = self.table.query(
+                    ScanIndexForward=True,
+                    **params,
+                    **last_evaluated_key,
+                )
+
+            except self.table.meta.client.exceptions.ResourceNotFoundException as e:
+                raise ValueError(f"Table {self.table.name} does not exist") from e
+            items.extend(response["Items"])
+            if "LastEvaluatedKey" not in response:
+                break
+            last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
+
+        traces: dict[str, Trace] = {}
+        for item in items:
+            trace = self.item_to_trace(item, traces)
+            traces[trace.span_id] = trace
 
         return sorted(traces.values(), key=lambda t: t.started_at)
 

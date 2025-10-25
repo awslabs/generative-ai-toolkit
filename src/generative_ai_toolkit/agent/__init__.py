@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from generative_ai_toolkit.agent.agent import Agent, BedrockConverseAgent
+from generative_ai_toolkit.agent.agent import Agent
+from generative_ai_toolkit.agent.bedrock_converse_agent import BedrockConverseAgent
 from generative_ai_toolkit.agent.tool import BedrockConverseTool, Tool
 
 __all__ = ["BedrockConverseAgent", "BedrockConverseTool", "Agent", "Tool"]
