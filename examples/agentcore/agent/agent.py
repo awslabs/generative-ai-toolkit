@@ -167,8 +167,7 @@ def handle_error(e: Exception) -> dict[str, str]:
 # Module-level agent instance - created once and reused
 bedrock_agent: BedrockConverseAgent = create_bedrock_agent(tracer=InMemoryTracer())
 
-# Register MCP tools
-register_mcp_tools_safely(bedrock_agent)
+# MCP tools will be registered lazily when JWT tokens are available
 
 
 @app.entrypoint
@@ -190,6 +189,9 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
 
                 # Pass JWT token to MCP manager for tool authentication
                 mcp_manager.set_jwt_token(jwt_token)
+
+                # Register MCP tools now that we have a JWT token (lazy registration)
+                register_mcp_tools_safely(bedrock_agent)
 
                 # Decode JWT token to extract user information (without verification for info extraction)
                 try:

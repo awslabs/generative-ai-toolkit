@@ -78,6 +78,10 @@ class McpToolManager:
 
     def set_jwt_token(self, jwt_token: str) -> None:
         """Set the JWT token for MCP authentication."""
+        # If JWT token changed, reset registration state to allow re-registration
+        if self.current_jwt_token != jwt_token:
+            self.tools_registered = False
+
         self.current_jwt_token = jwt_token
         # If we have an existing client, update its token
         if self.mcp_client:
