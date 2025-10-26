@@ -2,6 +2,8 @@
 """Weather Agent for AgentCore Runtime using Generative AI Toolkit with MCP integration."""
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import sys
@@ -62,7 +64,6 @@ def validate_environment_variables():
 validate_environment_variables()
 
 app = BedrockAgentCoreApp()
-
 
 # Global MCP tool manager instance
 mcp_manager = McpToolManager()
@@ -182,16 +183,12 @@ register_mcp_tools_safely(bedrock_agent)
 @app.entrypoint
 def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
+
     try:
-        # Print the full context object for debugging
-        logger.info(f"Full RequestContext: {context}")
-        logger.info(f"RequestContext type: {type(context)}")
-        logger.info(f"RequestContext dict: {context.__dict__}")
 
         # Check for Authorization header and extract user info from JWT
         if context.request_headers and "Authorization" in context.request_headers:
             auth_header = context.request_headers["Authorization"]
-            logger.info(f"Authorization header found: {auth_header[:50]}...")
 
             # Extract JWT token (remove "Bearer " prefix)
             if auth_header.startswith("Bearer "):
@@ -199,8 +196,6 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
 
                 # Decode JWT token to extract user information (without verification for info extraction)
                 try:
-                    import base64
-                    import json
 
                     # Decode JWT payload (second part after splitting by '.')
                     parts = jwt_token.split(".")
@@ -216,7 +211,6 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
                         # Extract user information
                         user_id = jwt_claims.get("sub")
                         username = jwt_claims.get("username")
-                        client_id = jwt_claims.get("client_id")
 
                         if user_id:
                             logger.info(

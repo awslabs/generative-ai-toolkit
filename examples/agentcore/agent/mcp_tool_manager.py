@@ -43,21 +43,24 @@ class McpTool(Tool):
     async def _async_invoke(self, **kwargs):
         """Internal async implementation of MCP tool invocation."""
         try:
-            # Get connected MCP client (reuses existing client and connection when possible)
-            client = await self.tool_manager.get_connected_client()
+            # Create a dedicated client for this tool call to avoid concurrency issues
+            client = await self.tool_manager.get_dedicated_client()
 
             logger.info(f"Calling MCP tool '{self.mcp_tool.name}' with args: {kwargs}")
-            result = await client.call_tool(self.mcp_tool.name, kwargs)
-            logger.info(f"MCP tool '{self.mcp_tool.name}' completed successfully")
 
-            # Extract text content from MCP result
-            if hasattr(result, "content") and result.content:
-                if hasattr(result.content[0], "text"):
-                    return result.content[0].text
+            # Use the client in a context manager to ensure proper cleanup
+            async with client:
+                result = await client.call_tool(self.mcp_tool.name, kwargs)
+                logger.info(f"MCP tool '{self.mcp_tool.name}' completed successfully")
+
+                # Extract text content from MCP result
+                if hasattr(result, "content") and result.content:
+                    if hasattr(result.content[0], "text"):
+                        return result.content[0].text
+                    else:
+                        return str(result.content[0])
                 else:
-                    return str(result.content[0])
-            else:
-                return str(result)
+                    return str(result)
         except Exception as e:
             logger.error(
                 f"Error in _async_invoke for {self.mcp_tool.name}: {e}", exc_info=True
@@ -85,18 +88,16 @@ class McpToolManager:
         return self.mcp_client
 
     async def get_connected_client(self) -> SimpleMcpClient:
-        """Get MCP client and ensure it's connected."""
+        """Get MCP client and ensure it's connected (for tool registration only)."""
         client = self._get_or_create_client()
 
-        # Always try to connect/reconnect to handle event loop changes
+        # Simple connection check without testing - avoid connection interference
         try:
             if not client.is_connected():
                 logger.info("Connecting to MCP server")
                 await client.connect()
                 logger.info("MCP client connected successfully")
             else:
-                # Test the connection with a lightweight operation
-                await client.list_tools()
                 logger.debug("Reusing existing MCP connection")
         except Exception as e:
             logger.info(f"Connection invalid ({e}), reconnecting...")
@@ -110,6 +111,14 @@ class McpToolManager:
             logger.info("MCP client reconnected successfully")
 
         return client
+
+    async def get_dedicated_client(self) -> SimpleMcpClient:
+        """Get a dedicated MCP client for a single tool call to avoid concurrency issues."""
+        mcp_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
+
+        # Create a new client instance for this specific call
+        logger.debug("Creating dedicated MCP client for tool call")
+        return SimpleMcpClient(runtime_arn=mcp_arn)
 
     async def register_mcp_tools(self, agent: BedrockConverseAgent) -> bool:
         """Register MCP tools with the Generative AI Toolkit agent."""
