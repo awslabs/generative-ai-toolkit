@@ -48,7 +48,6 @@ class Tool(Protocol):
         ...
 
 
-
 class BedrockConverseTool(Tool):
 
     def __init__(
@@ -91,10 +90,46 @@ class BedrockConverseTool(Tool):
             )
 
         docstring = textwrap.dedent(func.__doc__).strip()
-        match = re.search(r"Parameters\s*[-]+\s*", docstring)
-        if match:
-            self.description = docstring[: match.start()].strip()
-            self.parameter_description = docstring[match.start() :].strip()
+        # Look for NumPy-style Parameters section: "Parameters" followed by dashes/equals (e.g., "---" or "===")
+        parameter_section_match = re.search(r"Parameters\s*[-=]{3,}\s*", docstring)
+        if parameter_section_match:
+            # Find where the Parameters section ends (when the next section starts)
+            # Pattern matches NumPy-style section headers like "Examples\n---" or "Returns\n==="
+            # \n           - newline before section name
+            # ([A-Z][\w\s]+) - section name starting with capital letter, followed by word chars/spaces
+            # \n           - newline after section name
+            # [-=]{3,}     - at least 3 dashes or equals for underline
+            # \s*          - optional trailing whitespace
+            sections_pattern = r"\n([A-Z][\w\s]+)\n[-=]{3,}\s*"
+
+            # Search for sections after the Parameters section
+            next_section_match = re.search(
+                sections_pattern, docstring[parameter_section_match.start() :]
+            )
+
+            if next_section_match:
+                # There's a section after Parameters
+                params_end = (
+                    parameter_section_match.start() + next_section_match.start()
+                )
+
+                # Description = before Parameters + after Parameters section
+                description_before = docstring[
+                    : parameter_section_match.start()
+                ].strip()
+                description_after = docstring[params_end:].strip()
+                self.description = description_before + "\n\n" + description_after
+
+                # Parameter description = just the Parameters section
+                self.parameter_description = docstring[
+                    parameter_section_match.start() : params_end
+                ].strip()
+            else:
+                # No section after Parameters, everything after is parameters
+                self.description = docstring[: parameter_section_match.start()].strip()
+                self.parameter_description = docstring[
+                    parameter_section_match.start() :
+                ].strip()
         else:
             self.description = docstring
             self.parameter_description = ""
@@ -142,15 +177,58 @@ class BedrockConverseTool(Tool):
         ]
 
     def _parse_parameter_docstring(self) -> dict[str, str]:
-        param_descriptions = {}
-        param_pattern = re.compile(r"^\s*(\w+)\s*:\s*.*\n\s*(.+)$", re.MULTILINE)
-        matches = param_pattern.findall(self.parameter_description)
+        """
+        Parse a NumPy-style Parameters section into {param_name: multi-line description}.
+        - Allows blank lines inside descriptions.
+        - Stops before the next param with the same indent or section end.
+        - Handles final lines without a trailing newline.
+        """
+        # Complex regex to match NumPy-style parameter entries with multi-line descriptions
+        # Example it matches:
+        #     param_name : str
+        #         This is the description line 1.
+        #         Description line 2.
+        #
+        #         Description line 3 after blank line.
+        param_pattern = re.compile(
+            r"^"  # Match at start of line (with re.MULTILINE, this is any line start)
+            r"(?P<indent>[ \t]*)"  # Capture the indentation (spaces/tabs) of the parameter line
+            r"(?P<name>\w+)"  # Capture the parameter name (letters, digits, underscore)
+            r"\s*:\s*"  # Match colon with optional whitespace around it
+            r".*"  # Match the rest of the line (type annotation, etc.)
+            r"\r?\n"  # Match newline (handles both Unix \n and Windows \r\n)
+            r"(?P<desc>("  # Start capturing the description block as a group
+            r"^(?P=indent)[ \t]+[^\r\n]*(?:\r?\n|\Z)"  # Description line: same indent + extra spaces/tab + content + newline/end
+            r"|"  # OR
+            r"^[ \t]*(?:\r?\n|\Z)"  # A blank line (only whitespace) + newline/end
+            r")+)",  # One or more description/blank lines (the + makes it required)
+            re.MULTILINE,  # ^ and $ match line boundaries, not just string boundaries
+        )
 
-        for match in matches:
-            param_name, param_desc = match
-            param_descriptions[param_name] = param_desc.strip()
+        src = self.parameter_description or ""
+        results: dict[str, str] = {}
 
-        return param_descriptions
+        for m in param_pattern.finditer(src):
+            name = m.group("name")
+            desc_block = m.group("desc")
+
+            # Remove the base indentation from description lines
+            # (?m) - multiline mode for ^
+            # ^    - start of each line
+            # (?:...) - non-capturing group
+            # {re.escape(m.group("indent"))} - the exact indent of the param line (e.g., "    ")
+            # [ \t]+ - followed by at least one space or tab (the description indent)
+            # This removes "    " (param indent) + " " (desc indent) from each line
+            desc_block = re.sub(
+                rf'(?m)^(?:{re.escape(m.group("indent"))}[ \t]+)',
+                "",  # Replace with empty string (remove the indentation)
+                desc_block,
+            )
+
+            # Trim only outer whitespace; keep internal blank lines for formatting.
+            results[name] = desc_block.strip()
+
+        return results
 
     @property
     def tool_spec(self) -> "ToolSpecificationTypeDef":
