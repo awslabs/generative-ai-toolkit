@@ -184,6 +184,8 @@ register_mcp_tools_safely(bedrock_agent)
 def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
 
+    logger.infof("Agent invoked.")
+
     try:
 
         # Check for Authorization header and extract user info from JWT
@@ -205,8 +207,6 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
                         payload_b64 += "=" * (4 - len(payload_b64) % 4)
                         payload_bytes = base64.urlsafe_b64decode(payload_b64)
                         jwt_claims = json.loads(payload_bytes)
-
-                        logger.info(f"JWT Claims: {json.dumps(jwt_claims, indent=2)}")
 
                         # Extract user information
                         user_id = jwt_claims.get("sub")
