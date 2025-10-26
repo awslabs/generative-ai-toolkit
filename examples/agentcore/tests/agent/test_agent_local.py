@@ -3,24 +3,28 @@ Local integration tests for the agent after CDK deployment.
 
 These tests run the actual agent code locally using pytest, testing:
 - Agent functionality with real Bedrock calls
-- MCP integration with deployed MCP server
+- MCP integration with deployed MCP server (requires JWT token)
 - Different payload structures
 - Error handling scenarios
 
 Prerequisites:
 - CDK stack deployed (cdk deploy)
 - AWS credentials configured
-- Environment variables set (AWS_REGION, BEDROCK_MODEL_ID, MCP_SERVER_RUNTIME_ARN, OAUTH_CREDENTIALS_SECRET_NAME, OAUTH_USER_POOL_ID, OAUTH_USER_POOL_CLIENT_ID)
+- Environment variables set (AWS_REGION, BEDROCK_MODEL_ID, MCP_SERVER_RUNTIME_ARN)
+- For MCP tool tests: JWT token from conftest.py fixtures
 
 Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 """
 
 # nosec B101
 
+import asyncio
 import textwrap
+from unittest.mock import Mock
 
 import agent
 import pytest
+from bedrock_agentcore.runtime.context import RequestContext
 
 from generative_ai_toolkit.evaluate.interactive import GenerativeAIToolkit
 from generative_ai_toolkit.metrics.modules.conversation import (
@@ -32,9 +36,24 @@ from generative_ai_toolkit.test import Case
 class TestAgentLocalIntegration:
     """Integration tests that run the agent with real AWS calls after CDK deployment."""
 
+    def create_mock_context(
+        self, session_id: str = "test-session", jwt_token: str = None
+    ) -> RequestContext:
+        """Create a mock RequestContext for local testing."""
+        mock_context = Mock(spec=RequestContext)
+        mock_context.session_id = session_id
+
+        # Add JWT token to request headers if provided
+        if jwt_token:
+            mock_context.request_headers = {"Authorization": f"Bearer {jwt_token}"}
+        else:
+            mock_context.request_headers = {}
+
+        return mock_context
+
     @pytest.mark.integration
     def test_agent_basic_functionality(self):
-        """Test basic agent functionality with real Bedrock calls."""
+        """Test basic agent functionality with real Bedrock calls (without JWT token)."""
 
         payload = {
             "input": {"prompt": "Hello! Please introduce yourself briefly."},
@@ -42,7 +61,9 @@ class TestAgentLocalIntegration:
         }
 
         try:
-            result = agent.invoke(payload)
+            # Test without JWT token - agent should still work for basic functionality
+            context = self.create_mock_context("integration-test-basic")
+            result = agent.invoke(payload, context)
 
             assert "result" in result  # nosec B101
             assert len(result["result"]) > 0  # nosec B101
@@ -55,11 +76,43 @@ class TestAgentLocalIntegration:
                 indicator in result_lower for indicator in weather_indicators
             )  # nosec B101
 
+            print("✅ Basic agent functionality works without JWT token")
+
         except Exception as e:
             pytest.fail(f"Agent invocation failed: {e}")
 
     @pytest.mark.integration
-    def test_agent_with_mcp_weather_tools(self):
+    def test_agent_basic_functionality_with_jwt(self, jwt_token):
+        """Test basic agent functionality with JWT token (tools available but not used)."""
+
+        payload = {
+            "input": {"prompt": "Hello! Please introduce yourself briefly."},
+            "sessionId": "integration-test-jwt",
+        }
+
+        try:
+            # Test with JWT token - agent should work and have tools available
+            context = self.create_mock_context("integration-test-jwt", jwt_token)
+            result = agent.invoke(payload, context)
+
+            assert "result" in result  # nosec B101
+            assert len(result["result"]) > 0  # nosec B101
+            assert isinstance(result["result"], str)  # nosec B101
+
+            # Should contain some indication it's a weather assistant
+            result_lower = result["result"].lower()
+            weather_indicators = ["weather", "assistant", "help", "information"]
+            assert any(
+                indicator in result_lower for indicator in weather_indicators
+            )  # nosec B101
+
+            print("✅ Basic agent functionality works with JWT token")
+
+        except Exception as e:
+            pytest.fail(f"Agent invocation failed: {e}")
+
+    @pytest.mark.integration
+    def test_agent_with_mcp_weather_tools(self, jwt_token):
         """Test agent with MCP weather tools using Case with Overall Conversation Expectations."""
 
         # Create a Case with overall conversation expectations
@@ -85,6 +138,12 @@ class TestAgentLocalIntegration:
         )
 
         try:
+            # Set JWT token in MCP manager and re-register tools for local testing
+            agent.mcp_manager.set_jwt_token(jwt_token)
+
+            # Re-register MCP tools with JWT token (needed for local testing)
+            asyncio.run(agent.mcp_manager.register_mcp_tools(agent.bedrock_agent))
+
             # Run the case directly against the BedrockConverseAgent
             traces = weather_case.run(agent.bedrock_agent)
 
@@ -152,7 +211,8 @@ class TestAgentLocalIntegration:
 
         for i, payload in enumerate(invalid_payloads):
             try:
-                result = agent.invoke(payload)
+                context = self.create_mock_context(f"error-test-{i}")
+                result = agent.invoke(payload, context)
 
                 # Should handle error gracefully and return error message
                 assert (
@@ -175,7 +235,8 @@ class TestAgentLocalIntegration:
 
         # Test with valid payload to ensure normal operation still works
         valid_payload = {"input": {"prompt": "Hello"}, "sessionId": "error-test"}
-        result = agent.invoke(valid_payload)
+        context = self.create_mock_context("error-test-valid")
+        result = agent.invoke(valid_payload, context)
         assert "result" in result  # nosec B101
         assert not result["result"].startswith(
             "Error:"
@@ -184,7 +245,7 @@ class TestAgentLocalIntegration:
 
     @pytest.mark.integration
     def test_agent_session_handling(self):
-        """Test agent with multiple calls in different sessions."""
+        """Test agent with multiple calls in different sessions (without JWT tokens)."""
 
         # Test multiple sessions
         sessions = [
@@ -196,7 +257,8 @@ class TestAgentLocalIntegration:
         results = []
         for payload in sessions:
             try:
-                result = agent.invoke(payload)
+                context = self.create_mock_context(payload["sessionId"])
+                result = agent.invoke(payload, context)
                 results.append(result)
             except Exception as e:
                 pytest.fail(f"Agent invocation failed for session: {e}")
@@ -208,3 +270,5 @@ class TestAgentLocalIntegration:
             assert (
                 len(result["result"]) > 0
             ), f"Session {i + 1} empty result"  # nosec B101
+
+        print("✅ Session handling works correctly")

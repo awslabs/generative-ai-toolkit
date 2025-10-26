@@ -2,12 +2,15 @@
 """Weather Agent for AgentCore Runtime using Generative AI Toolkit with MCP integration."""
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import sys
 
 import boto3
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.runtime.context import RequestContext
 from mcp_tool_manager import McpToolManager
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
@@ -26,9 +29,6 @@ def validate_environment_variables():
         "AWS_REGION": "AWS region for Bedrock service",
         "BEDROCK_MODEL_ID": "Bedrock model identifier",
         "MCP_SERVER_RUNTIME_ARN": "MCP server runtime ARN for tool integration",
-        "OAUTH_CREDENTIALS_SECRET_NAME": "OAuth credentials secret name for authentication",
-        "OAUTH_USER_POOL_ID": "OAuth Cognito User Pool ID for authentication",
-        "OAUTH_USER_POOL_CLIENT_ID": "OAuth Cognito User Pool Client ID for authentication",
     }
 
     missing_vars = []
@@ -48,20 +48,13 @@ def validate_environment_variables():
     logger.info(f"  AWS_REGION: {os.environ.get('AWS_REGION')}")
     logger.info(f"  BEDROCK_MODEL_ID: {os.environ.get('BEDROCK_MODEL_ID')}")
     logger.info(f"  MCP_SERVER_RUNTIME_ARN: {os.environ.get('MCP_SERVER_RUNTIME_ARN')}")
-    logger.info(
-        f"  OAUTH_CREDENTIALS_SECRET_NAME: {os.environ.get('OAUTH_CREDENTIALS_SECRET_NAME')}"
-    )
-    logger.info(f"  OAUTH_USER_POOL_ID: {os.environ.get('OAUTH_USER_POOL_ID')}")
-    logger.info(
-        f"  OAUTH_USER_POOL_CLIENT_ID: {os.environ.get('OAUTH_USER_POOL_CLIENT_ID')}"
-    )
+    logger.info("  Authentication: JWT Bearer token (passed from request headers)")
 
 
 # Validate environment on startup
 validate_environment_variables()
 
 app = BedrockAgentCoreApp()
-
 
 # Global MCP tool manager instance
 mcp_manager = McpToolManager()
@@ -174,14 +167,75 @@ def handle_error(e: Exception) -> dict[str, str]:
 # Module-level agent instance - created once and reused
 bedrock_agent: BedrockConverseAgent = create_bedrock_agent(tracer=InMemoryTracer())
 
-# Register MCP tools
-register_mcp_tools_safely(bedrock_agent)
+# MCP tools will be registered lazily when JWT tokens are available
 
 
 @app.entrypoint
-def invoke(payload: dict[str, object]) -> dict[str, str]:
+def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
+
+    logger.info("Agent invoked.")
+
     try:
+        jwt_token = None
+
+        # Check for Authorization header and extract JWT token
+        if context.request_headers and "Authorization" in context.request_headers:
+            auth_header = context.request_headers["Authorization"]
+
+            # Extract JWT token (remove "Bearer " prefix)
+            if auth_header.startswith("Bearer "):
+                jwt_token = auth_header[7:]  # Remove "Bearer " prefix
+
+                # Pass JWT token to MCP manager for tool authentication
+                mcp_manager.set_jwt_token(jwt_token)
+
+                # Register MCP tools now that we have a JWT token (lazy registration)
+                register_mcp_tools_safely(bedrock_agent)
+
+                # Decode JWT token to extract user information (without verification for info extraction)
+                try:
+                    # Decode JWT payload (second part after splitting by '.')
+                    parts = jwt_token.split(".")
+                    if len(parts) >= 2:
+                        # Add padding if needed for base64 decoding
+                        payload_b64 = parts[1]
+                        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+                        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                        jwt_claims = json.loads(payload_bytes)
+
+                        # Extract user information
+                        user_id = jwt_claims.get("sub")
+                        username = jwt_claims.get("username")
+
+                        if user_id:
+                            logger.info(
+                                f"Processing request for user: {user_id} (username: {username})"
+                            )
+                        else:
+                            logger.info("No user ID found in JWT claims")
+                    else:
+                        logger.warning("Invalid JWT token format")
+
+                except Exception as e:
+                    logger.error(f"Error decoding JWT token: {e}")
+            else:
+                logger.warning("Authorization header doesn't start with 'Bearer '")
+        else:
+            logger.warning(
+                "No Authorization header found - MCP tools may not be available"
+            )
+            if context.request_headers:
+                logger.info(
+                    f"Available headers: {list(context.request_headers.keys())}"
+                )
+            else:
+                logger.info("request_headers is None")
+
+        # If no JWT token is available, warn about limited functionality
+        if not jwt_token:
+            logger.warning("No JWT token available - MCP tools will not be accessible")
+
         # Extract session information and user message
         session_id, user_message = extract_session_info(payload)
 

@@ -4,13 +4,13 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
-import { OAuthAuth } from "./oauth-auth";
+import { CognitoAuth } from "./cognito-auth";
 
 export interface McpServerProps {
   /**
-   * OAuth authentication construct for MCP server authorization
+   * Cognito authentication construct for MCP server authorization
    */
-  readonly oauthAuth?: OAuthAuth;
+  readonly cognitoAuth?: CognitoAuth;
   /**
    * The name prefix for MCP Server resources
    */
@@ -22,12 +22,12 @@ export class McpServer extends Construct {
   public readonly runtimeEndpoint: bedrockagentcore.CfnRuntimeEndpoint;
   public readonly executionRole: iam.Role;
   public readonly imageAsset: DockerImageAsset;
-  public readonly oauthAuth?: OAuthAuth;
+  public readonly cognitoAuth?: CognitoAuth;
 
   constructor(scope: Construct, id: string, props?: McpServerProps) {
     super(scope, id);
 
-    this.oauthAuth = props?.oauthAuth;
+    this.cognitoAuth = props?.cognitoAuth;
     const namePrefix = props?.namePrefix || cdk.Stack.of(this).stackName;
 
     // Build MCP server container
@@ -39,19 +39,10 @@ export class McpServer extends Construct {
     });
 
     // Build base IAM policy statements
+    // Note: Workload identity permissions (GetWorkloadAccessTokenForJWT) are automatically
+    // handled by the AWSServiceRoleForBedrockAgentCoreRuntimeIdentity Service-Linked Role
+    // for agents created on or after October 13, 2025
     const baseStatements = [
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ["bedrock-agentcore:GetWorkloadAccessTokenForJWT"],
-        resources: [
-          `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
-            cdk.Stack.of(this).account
-          }:workload-identity-directory/*`,
-          `arn:aws:bedrock-agentcore:${cdk.Stack.of(this).region}:${
-            cdk.Stack.of(this).account
-          }:runtime/*`,
-        ],
-      }),
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
@@ -87,22 +78,18 @@ export class McpServer extends Construct {
       }),
     ];
 
-    // Add OAuth-specific permissions if OAuth is enabled
+    // Build inline policies
     const inlinePolicies: { [name: string]: iam.PolicyDocument } = {
       McpServerPermissions: new iam.PolicyDocument({
         statements: baseStatements,
       }),
     };
 
-    if (this.oauthAuth) {
-      inlinePolicies.SecretsManagerAccess =
-        this.oauthAuth.createSecretsManagerAccessPolicy();
-    }
-
     // IAM execution role
     this.executionRole = new iam.Role(this, "ExecutionRole", {
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
-      description: "Execution role for MCP Server runtime",
+      description:
+        "Execution role for MCP Server runtime with JWT passthrough authentication",
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           "service-role/AmazonECSTaskExecutionRolePolicy"
@@ -118,7 +105,7 @@ export class McpServer extends Construct {
     const baseRuntimeConfig = {
       agentRuntimeName: `${namePrefix}_mcp_server`.replace(/-/g, "_"),
       description:
-        "AgentCore runtime for the MCP server (MCP protocol) with OAuth authentication",
+        "AgentCore runtime for the MCP server (MCP protocol) with JWT passthrough authentication",
       roleArn: this.executionRole.roleArn,
       agentRuntimeArtifact: {
         containerConfiguration: {
@@ -131,8 +118,8 @@ export class McpServer extends Construct {
       protocolConfiguration: "MCP",
     };
 
-    // Create runtime configuration with JWT authorization if OAuth is enabled
-    const runtimeConfig: bedrockagentcore.CfnRuntimeProps = this.oauthAuth
+    // Create runtime configuration with JWT authorization if Cognito is enabled
+    const runtimeConfig: bedrockagentcore.CfnRuntimeProps = this.cognitoAuth
       ? {
           ...baseRuntimeConfig,
           authorizerConfiguration: {
@@ -140,9 +127,11 @@ export class McpServer extends Construct {
               discoveryUrl: `https://cognito-idp.${
                 cdk.Stack.of(this).region
               }.amazonaws.com/${
-                this.oauthAuth.userPool.userPoolId
+                this.cognitoAuth.userPool.userPoolId
               }/.well-known/openid-configuration`,
-              allowedClients: [this.oauthAuth.userPoolClient.userPoolClientId],
+              allowedClients: [
+                this.cognitoAuth.userPoolClient.userPoolClientId,
+              ],
             },
           },
         }
@@ -162,7 +151,7 @@ export class McpServer extends Construct {
       {
         name: `${namePrefix}_mcp_server_endpoint`.replace(/-/g, "_"),
         description:
-          "Runtime endpoint for the MCP server with OAuth authentication",
+          "Runtime endpoint for the MCP server with JWT passthrough authentication",
         agentRuntimeId: this.runtime.attrAgentRuntimeId,
       }
     );

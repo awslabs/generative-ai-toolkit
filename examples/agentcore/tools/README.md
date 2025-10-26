@@ -38,7 +38,7 @@ python view-agent-logs.py --help
 
 - AWS CLI configured with appropriate permissions
 - For AgentCore logs, you need:
-  - `bedrock-agentcore-control:ListAgentRuntimes`
+  - `bedrock-agentcore:ListAgentRuntimes`
   - `logs:DescribeLogGroups`
   - `logs:FilterLogEvents`
 
