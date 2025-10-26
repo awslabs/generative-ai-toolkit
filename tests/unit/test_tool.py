@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import textwrap
+
 import pytest
 
 from generative_ai_toolkit.agent import BedrockConverseAgent, BedrockConverseTool, Tool
@@ -226,3 +228,160 @@ def test_explicit_tool_spec_with_parameters(mock_bedrock_converse):
     Expect(agent.traces).tool_invocations.to_include("get_weather").with_input(
         {"preferred_weather": "Sunny"}
     )
+
+
+def test_tool_with_multiline_parameter_descriptions(mock_bedrock_converse):
+    """
+    Test that multi-line parameter descriptions are correctly parsed and included
+    in the tool spec when invoking tools through the agent.
+    """
+
+    def analyze_data(
+        data_source: str, filter_criteria: str, output_format: str = "json"
+    ):
+        """
+        Analyzes data from a specified source with filtering capabilities.
+
+        This is a more detailed description of the function.
+
+        Parameters
+        ----------
+        data_source : str
+            The source location of the data to analyze.
+            This could be a file path, URL, or database connection string.
+            Multiple formats are supported.
+        filter_criteria : str
+            The criteria to filter the data before analysis.
+            Supports SQL-like syntax for complex filtering operations.
+            Can include multiple conditions joined by AND/OR operators.
+        output_format : str
+            The desired output format for the analysis results.
+
+            Common formats include json, csv, or xml.
+
+        Examples
+        --------
+        This is an example.
+
+        Other section
+        --------
+        Some other section
+        """
+        return f"Analyzed {data_source} with filter '{filter_criteria}' in {output_format} format"
+
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+    agent.register_tool(analyze_data)
+
+    tool_spec = agent.tools["analyze_data"].tool_spec
+    assert (
+        tool_spec.get("description")
+        == textwrap.dedent(
+            """
+            Analyzes data from a specified source with filtering capabilities.
+
+            This is a more detailed description of the function.
+
+            Examples
+            --------
+            This is an example.
+
+            Other section
+            --------
+            Some other section
+            """
+        ).strip()
+    )
+
+    json_schema = tool_spec["inputSchema"].get("json")
+    assert json_schema is not None
+    properties = json_schema["properties"]
+
+    assert (
+        properties["data_source"]["description"]
+        == textwrap.dedent(
+            """
+            The source location of the data to analyze.
+            This could be a file path, URL, or database connection string.
+            Multiple formats are supported.
+            """
+        ).strip()
+    )
+    assert (
+        properties["filter_criteria"]["description"]
+        == textwrap.dedent(
+            """
+            The criteria to filter the data before analysis.
+            Supports SQL-like syntax for complex filtering operations.
+            Can include multiple conditions joined by AND/OR operators.
+            """
+        ).strip()
+    )
+    assert (
+        properties["output_format"]["description"]
+        == textwrap.dedent(
+            """
+            The desired output format for the analysis results.
+
+            Common formats include json, csv, or xml.
+            """
+        ).strip()
+    )
+
+    mock_bedrock_converse.add_output(
+        tool_use_output=[
+            {
+                "name": "analyze_data",
+                "input": {
+                    "data_source": "/data/sales.csv",
+                    "filter_criteria": "region='US' AND year=2024",
+                },
+            }
+        ]
+    )
+    mock_bedrock_converse.add_output(
+        text_output=["The analysis shows strong sales growth."]
+    )
+
+    agent.converse("Analyze the sales data")
+
+    Expect(agent.traces).tool_invocations.to_include("analyze_data").with_input(
+        {
+            "data_source": "/data/sales.csv",
+            "filter_criteria": "region='US' AND year=2024",
+        }
+    )
+
+    llm_invocation = next(
+        trace
+        for trace in agent.traces
+        if trace.attributes.get("ai.trace.type") == "llm-invocation"
+    )
+    tool_spec = llm_invocation.attributes["ai.llm.request.tool.config"]["tools"][0][
+        "toolSpec"
+    ]
+    assert tool_spec == {
+        "name": "analyze_data",
+        "description": "Analyzes data from a specified source with filtering capabilities.\n\nThis is a more detailed description of the function.\n\nExamples\n--------\nThis is an example.\n\nOther section\n--------\nSome other section",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "data_source": {
+                        "type": "string",
+                        "description": "The source location of the data to analyze.\nThis could be a file path, URL, or database connection string.\nMultiple formats are supported.",
+                    },
+                    "filter_criteria": {
+                        "type": "string",
+                        "description": "The criteria to filter the data before analysis.\nSupports SQL-like syntax for complex filtering operations.\nCan include multiple conditions joined by AND/OR operators.",
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "description": "The desired output format for the analysis results.\n\nCommon formats include json, csv, or xml.",
+                    },
+                },
+                "required": ["data_source", "filter_criteria"],
+            }
+        },
+    }
