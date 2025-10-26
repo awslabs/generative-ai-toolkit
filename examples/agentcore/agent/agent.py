@@ -184,7 +184,7 @@ register_mcp_tools_safely(bedrock_agent)
 def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str]:
     """Process agent invocation from AgentCore Runtime."""
 
-    logger.infof("Agent invoked.")
+    logger.info("Agent invoked.")
 
     try:
 
