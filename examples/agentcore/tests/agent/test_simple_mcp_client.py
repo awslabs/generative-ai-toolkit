@@ -1,7 +1,7 @@
 """
 Integration tests for SimpleMcpClient with AgentCore Runtime.
 
-This module tests the simplified MCP client with OAuth Bearer token authentication
+This module tests the simplified MCP client with JWT passthrough authentication
 using real AgentCore Runtime MCP servers and deployed infrastructure.
 """
 
@@ -17,16 +17,19 @@ class TestSimpleMcpClientIntegration:
     """Integration tests with real AgentCore Runtime MCP server."""
 
     @pytest.fixture(scope="class")
-    def simple_client(self):
+    def simple_client(self, jwt_token):
         """Create simple MCP client with real configuration."""
-        return SimpleMcpClient(runtime_arn=os.environ["MCP_SERVER_RUNTIME_ARN"])
+        return SimpleMcpClient(
+            runtime_arn=os.environ["MCP_SERVER_RUNTIME_ARN"], jwt_token=jwt_token
+        )
 
-    def test_client_initialization_with_real_arn(self, simple_client):
+    def test_client_initialization_with_real_arn(self, simple_client, jwt_token):
         """Test client initialization with real AgentCore Runtime ARN."""
         mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
         assert simple_client.runtime_arn == mcp_server_runtime_arn  # nosec B101
         assert simple_client.region in mcp_server_runtime_arn  # nosec B101
         assert not simple_client.is_connected()  # nosec B101
+        assert simple_client.jwt_token == jwt_token  # nosec B101
 
         # Verify MCP URL construction
         assert "bedrock-agentcore" in simple_client.mcp_url  # nosec B101
@@ -34,7 +37,9 @@ class TestSimpleMcpClientIntegration:
         assert "invocations?qualifier=DEFAULT" in simple_client.mcp_url  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_full_connection_to_agentcore_mcp_server(self, simple_client):
+    async def test_full_connection_to_agentcore_mcp_server(
+        self, simple_client, jwt_token
+    ):
         """Test full connection to deployed AgentCore Runtime MCP server."""
         try:
             # Connect to the MCP server
@@ -60,7 +65,7 @@ class TestSimpleMcpClientIntegration:
                 print(f"Disconnect error: {disconnect_error}")
 
     @pytest.mark.asyncio
-    async def test_list_tools_from_deployed_mcp_server(self, simple_client):
+    async def test_list_tools_from_deployed_mcp_server(self, simple_client, jwt_token):
         """Test listing tools from deployed AgentCore Runtime MCP server."""
         try:
             # Connect and list tools
@@ -69,12 +74,8 @@ class TestSimpleMcpClientIntegration:
             tools_result = await simple_client.list_tools()
 
             # Verify we got tools
-            assert hasattr(
-                tools_result, "tools"
-            ), "Expected tools in response"  # nosec B101
-            assert (
-                len(tools_result.tools) > 0
-            ), "Expected at least one tool"  # nosec B101
+            assert hasattr(tools_result, "tools"), "Expected tools in response"  # nosec B101
+            assert len(tools_result.tools) > 0, "Expected at least one tool"  # nosec B101
 
             # Log available tools for debugging
             print(f"\nFound {len(tools_result.tools)} tools:")
@@ -84,12 +85,8 @@ class TestSimpleMcpClientIntegration:
             # Verify tool structure
             first_tool = tools_result.tools[0]
             assert hasattr(first_tool, "name"), "Tool should have name"  # nosec B101
-            assert hasattr(
-                first_tool, "description"
-            ), "Tool should have description"  # nosec B101
-            assert hasattr(
-                first_tool, "inputSchema"
-            ), "Tool should have input schema"  # nosec B101
+            assert hasattr(first_tool, "description"), "Tool should have description"  # nosec B101
+            assert hasattr(first_tool, "inputSchema"), "Tool should have input schema"  # nosec B101
 
         except Exception as e:
             pytest.fail(f"Failed to list tools from MCP server: {e}")
@@ -98,7 +95,7 @@ class TestSimpleMcpClientIntegration:
             await simple_client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_call_tool_on_deployed_mcp_server(self, simple_client):
+    async def test_call_tool_on_deployed_mcp_server(self, simple_client, jwt_token):
         """Test calling weather tools on deployed AgentCore Runtime MCP server."""
         try:
             # Connect and get tools
@@ -106,12 +103,10 @@ class TestSimpleMcpClientIntegration:
             tools_result = await simple_client.list_tools()
 
             # Test must fail if no tools are available
-            assert (
-                tools_result.tools
-            ), "MCP server must have tools available"  # nosec B101
-            assert (
-                len(tools_result.tools) > 0
-            ), "Expected at least one tool from MCP server"  # nosec B101
+            assert tools_result.tools, "MCP server must have tools available"  # nosec B101
+            assert len(tools_result.tools) > 0, (
+                "Expected at least one tool from MCP server"
+            )  # nosec B101
 
             # Find and test get_weather tool
             weather_tool = None
@@ -132,16 +127,12 @@ class TestSimpleMcpClientIntegration:
                     "get_weather", {"city": "Amsterdam"}
                 )
 
-                assert (
-                    result is not None
-                ), "get_weather tool should return a result"  # nosec B101
+                assert result is not None, "get_weather tool should return a result"  # nosec B101
                 print(f"Weather result: {result}")
 
                 # Verify the result contains expected weather information
                 result_str = str(result).lower()
-                assert (
-                    "amsterdam" in result_str
-                ), "Result should mention Amsterdam"  # nosec B101
+                assert "amsterdam" in result_str, "Result should mention Amsterdam"  # nosec B101
                 assert any(
                     indicator in result_str
                     for indicator in ["weather", "temperature", "sunny", "°c"]
@@ -156,16 +147,12 @@ class TestSimpleMcpClientIntegration:
                     "get_forecast", {"city": "London", "days": 5}
                 )
 
-                assert (
-                    result is not None
-                ), "get_forecast tool should return a result"  # nosec B101
+                assert result is not None, "get_forecast tool should return a result"  # nosec B101
                 print(f"Forecast result: {result}")
 
                 # Verify the result contains expected forecast information
                 result_str = str(result).lower()
-                assert (
-                    "london" in result_str
-                ), "Result should mention London"  # nosec B101
+                assert "london" in result_str, "Result should mention London"  # nosec B101
                 assert any(
                     indicator in result_str
                     for indicator in ["forecast", "days", "weather", "°c"]
@@ -188,7 +175,7 @@ class TestSimpleMcpClientIntegration:
             await simple_client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_context_manager_with_real_server(self, simple_client):
+    async def test_context_manager_with_real_server(self, simple_client, jwt_token):
         """Test async context manager with real AgentCore Runtime MCP server."""
         try:
             # Use as context manager
@@ -207,14 +194,14 @@ class TestSimpleMcpClientIntegration:
             pytest.fail(f"Context manager test failed: {e}")
 
     @pytest.mark.asyncio
-    async def test_automatic_configuration_loading(self, simple_client):
+    async def test_automatic_configuration_loading(self, simple_client, jwt_token):
         """Test that configuration is loaded automatically from CDK stack."""
         try:
             # The client should be able to load configuration automatically from environment variables
             await simple_client.connect()
 
             # If we get here, configuration was loaded successfully
-            assert simple_client.auth is not None  # nosec B101
+            assert simple_client.jwt_token is not None  # nosec B101
 
             # Verify we can list tools (proves authentication worked)
             tools_result = await simple_client.list_tools()

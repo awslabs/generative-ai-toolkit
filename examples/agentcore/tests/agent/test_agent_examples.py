@@ -121,9 +121,7 @@ class TestAgentExamples:
 
             # Should contain weather-related information
             weather_indicators = ["temperature", "weather", "degrees", "conditions"]
-            assert any(
-                indicator in result_lower for indicator in weather_indicators
-            )  # nosec B101
+            assert any(indicator in result_lower for indicator in weather_indicators)  # nosec B101
 
             print(f"Weather response: {result}")
 
@@ -146,9 +144,7 @@ class TestAgentExamples:
 
             # Should contain forecast information
             forecast_indicators = ["forecast", "days", "tomorrow", "weather"]
-            assert any(
-                indicator in result_lower for indicator in forecast_indicators
-            )  # nosec B101
+            assert any(indicator in result_lower for indicator in forecast_indicators)  # nosec B101
 
             print(f"Forecast response: {result}")
 
@@ -188,9 +184,7 @@ class TestAgentExamples:
                 "between",
                 "different",
             ]
-            assert any(
-                indicator in result_lower for indicator in comparison_indicators
-            )  # nosec B101
+            assert any(indicator in result_lower for indicator in comparison_indicators)  # nosec B101
 
             print(f"Comparison response: {result}")
 
@@ -223,9 +217,7 @@ class TestAgentExamples:
 
             # Should handle the follow-up appropriately
             context_indicators = ["tokyo", "forecast", "tomorrow", "same"]
-            assert any(
-                indicator in result2_lower for indicator in context_indicators
-            )  # nosec B101
+            assert any(indicator in result2_lower for indicator in context_indicators)  # nosec B101
 
             print(f"Follow-up response: {result2}")
 
@@ -329,9 +321,7 @@ class TestAgentExamples:
                 "provide",
                 "check",
             ]
-            assert any(
-                indicator in result_lower for indicator in capability_indicators
-            )  # nosec B101
+            assert any(indicator in result_lower for indicator in capability_indicators)  # nosec B101
 
             print(f"Capabilities response: {result}")
 

@@ -18,21 +18,25 @@ from simple_mcp_client import SimpleMcpClient
 class TestMcpServerDeployment:
     """Test suite for deployed MCP server tool schema validation."""
 
-    async def _get_tools_via_mcp_client(self):
+    async def _get_tools_via_mcp_client(self, jwt_token):
         """Helper method to get tools using SimpleMcpClient."""
         mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
 
-        async with SimpleMcpClient(runtime_arn=mcp_server_runtime_arn) as mcp_client:
+        async with SimpleMcpClient(
+            runtime_arn=mcp_server_runtime_arn, jwt_token=jwt_token
+        ) as mcp_client:
             tools_result = await mcp_client.list_tools()
             return tools_result.tools
 
     @pytest.mark.asyncio
-    async def test_mcp_server_tools_list_endpoint(self, cdk_outputs):
+    async def test_mcp_server_tools_list_endpoint(self, cdk_outputs, jwt_token):
         """Test that the deployed MCP server responds to tools/list requests using MCP client."""
         mcp_server_runtime_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
 
         # Use SimpleMcpClient to connect and list tools
-        async with SimpleMcpClient(runtime_arn=mcp_server_runtime_arn) as mcp_client:
+        async with SimpleMcpClient(
+            runtime_arn=mcp_server_runtime_arn, jwt_token=jwt_token
+        ) as mcp_client:
             # List available tools from MCP server
             tools_result = await mcp_client.list_tools()
 
@@ -48,9 +52,9 @@ class TestMcpServerDeployment:
             assert len(tools_result.tools) == 2  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_mcp_server_returns_weather_tools(self, cdk_outputs):
+    async def test_mcp_server_returns_weather_tools(self, cdk_outputs, jwt_token):
         """Test that the MCP server returns the expected weather tools."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Verify we have the expected tools
         tool_names = [tool.name for tool in tools]
@@ -61,9 +65,9 @@ class TestMcpServerDeployment:
         assert len(tools) == 2  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_weather_tool_json_schema_structure(self, cdk_outputs):
+    async def test_weather_tool_json_schema_structure(self, cdk_outputs, jwt_token):
         """Test that the get_weather tool returns proper JSON schema with Pydantic model structure."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Find the get_weather tool
         weather_tool = None
@@ -126,9 +130,9 @@ class TestMcpServerDeployment:
         assert "city" in model_def["required"]  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_forecast_tool_json_schema_structure(self, cdk_outputs):
+    async def test_forecast_tool_json_schema_structure(self, cdk_outputs, jwt_token):
         """Test that the get_forecast tool returns proper JSON schema with Pydantic model structure."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Find the get_forecast tool
         forecast_tool = None
@@ -199,9 +203,9 @@ class TestMcpServerDeployment:
         assert "days" not in model_def["required"]  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_tool_schemas_are_valid_json(self, cdk_outputs):
+    async def test_tool_schemas_are_valid_json(self, cdk_outputs, jwt_token):
         """Test that all tool schemas are valid JSON and can be serialized."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Test that each tool's schema can be serialized and deserialized
         for tool in tools:
@@ -221,9 +225,9 @@ class TestMcpServerDeployment:
             )
 
     @pytest.mark.asyncio
-    async def test_tool_descriptions_are_present(self, cdk_outputs):
+    async def test_tool_descriptions_are_present(self, cdk_outputs, jwt_token):
         """Test that all tools have meaningful descriptions."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Verify each tool has a meaningful description
         for tool in tools:
@@ -240,9 +244,11 @@ class TestMcpServerDeployment:
             )
 
     @pytest.mark.asyncio
-    async def test_pydantic_model_validation_rules_preserved(self, cdk_outputs):
+    async def test_pydantic_model_validation_rules_preserved(
+        self, cdk_outputs, jwt_token
+    ):
         """Test that Pydantic model validation rules are preserved in the JSON schema."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         # Test weather tool validation rules
         weather_tool = next(
@@ -302,9 +308,9 @@ class TestMcpServerDeployment:
         assert len(days_prop["description"]) > 0  # nosec B101
 
     @pytest.mark.asyncio
-    async def test_pydantic_model_titles_and_descriptions(self, cdk_outputs):
+    async def test_pydantic_model_titles_and_descriptions(self, cdk_outputs, jwt_token):
         """Test that Pydantic model titles and descriptions are included in schemas."""
-        tools = await self._get_tools_via_mcp_client()
+        tools = await self._get_tools_via_mcp_client(jwt_token)
 
         for tool in tools:
             request_schema = tool.inputSchema["properties"]["request"]

@@ -46,9 +46,9 @@ class TestJWTAuthentication:
 
         # JWT tokens should have 3 parts separated by dots
         parts = jwt_token.split(".")
-        assert (
-            len(parts) == 3
-        ), "JWT token should have 3 parts (header.payload.signature)"
+        assert len(parts) == 3, (
+            "JWT token should have 3 parts (header.payload.signature)"
+        )
 
         # Decode and inspect JWT claims (for debugging)
 
