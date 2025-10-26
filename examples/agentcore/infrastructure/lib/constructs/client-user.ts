@@ -30,9 +30,8 @@ export interface ClientUserProps extends BaseCognitoUserProps {
  * compliant access token using JWT format" as described in the AWS documentation.
  * The credentials are securely stored in AWS Secrets Manager.
  *
- * This user is different from the AgentUser - while AgentUser is used by agent.py to
- * authenticate with mcp_server.py, this ClientUser is used by external clients to
- * invoke the agent runtime itself using JWT bearer tokens.
+ * This user is used by external clients to invoke the agent runtime using JWT bearer tokens.
+ * The JWT token is passed through to the MCP server for authentication.
  */
 export class ClientUser extends Construct {
   public readonly user: cognito.CfnUserPoolUser;

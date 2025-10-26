@@ -10,7 +10,7 @@ These tests run the actual agent code locally using pytest, testing:
 Prerequisites:
 - CDK stack deployed (cdk deploy)
 - AWS credentials configured
-- Environment variables set (AWS_REGION, BEDROCK_MODEL_ID, MCP_SERVER_RUNTIME_ARN, OAUTH_CREDENTIALS_SECRET_NAME, OAUTH_USER_POOL_ID, OAUTH_USER_POOL_CLIENT_ID)
+- Environment variables set (AWS_REGION, BEDROCK_MODEL_ID, MCP_SERVER_RUNTIME_ARN)
 
 Run with: pytest examples/agentcore/tests/agent/test_agent_local.py -v
 """

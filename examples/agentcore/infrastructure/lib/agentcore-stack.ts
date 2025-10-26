@@ -1,7 +1,6 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { Agent } from "./constructs/agent";
-import { AgentUser } from "./constructs/agent-user";
 import { ClientUser } from "./constructs/client-user";
 import { CognitoAuth } from "./constructs/cognito-auth";
 import { McpServer } from "./constructs/mcp-server";
@@ -51,13 +50,6 @@ export class AgentCoreIntegrationStack extends cdk.Stack {
       namePrefix: this.stackName,
     });
 
-    // Agent User for MCP authentication
-    // This user is used by agent.py to authenticate with mcp_server.py
-    const agentUser = new AgentUser(this, "AgentUser", {
-      userPool: cognitoAuth.userPool,
-      namePrefix: this.stackName,
-    });
-
     // Client User for invoking agent runtime with JWT tokens
     // This user is used by external clients to invoke the agent runtime with OAuth JWT bearer tokens
     const clientUser = new ClientUser(this, "ClientUser", {
@@ -65,19 +57,17 @@ export class AgentCoreIntegrationStack extends cdk.Stack {
       namePrefix: this.stackName,
     });
 
-    // MCP Server with Cognito authentication
+    // MCP Server with Cognito authentication (JWT passthrough)
     const mcpServer = new McpServer(this, "McpServer", {
       cognitoAuth: cognitoAuth,
-      agentUser: agentUser,
       namePrefix: this.stackName,
     });
 
-    // Agent with MCP Server integration and JWT authentication
+    // Agent with MCP Server integration and JWT passthrough authentication
     const agent = new Agent(this, "Agent", {
       namePrefix: this.stackName,
       mcpServerRuntimeArn: mcpServer.runtime.attrAgentRuntimeArn,
       cognitoAuth: cognitoAuth,
-      agentUser: agentUser,
       enableJwtAuth: true, // Enable JWT bearer token authentication
       bedrockModelId: bedrockModelId, // Required model ID
     });

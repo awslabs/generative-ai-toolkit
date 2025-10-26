@@ -16,7 +16,7 @@ export interface CognitoAuthProps {
  * - Cognito User Pool with secure password policies
  * - User Pool Client configured for OAuth flows
  *
- * Agent users should be created separately using the AgentUser construct
+ * Client users should be created separately using the ClientUser construct
  * and passed to this construct's user pool.
  */
 export class CognitoAuth extends Construct {

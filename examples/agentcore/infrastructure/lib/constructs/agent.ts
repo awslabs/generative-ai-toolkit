@@ -4,7 +4,6 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import * as path from "path";
-import { AgentUser } from "./agent-user";
 import { CognitoAuth } from "./cognito-auth";
 import { RequestHeaderConfig } from "./request-header-config";
 
@@ -21,10 +20,6 @@ export interface AgentProps {
    * Cognito authentication construct for OAuth infrastructure
    */
   readonly cognitoAuth: CognitoAuth;
-  /**
-   * Agent user for MCP server authentication
-   */
-  readonly agentUser: AgentUser;
   /**
    * Whether to enable JWT bearer token authentication for the agent runtime
    * When enabled, the agent can be invoked with OAuth JWT tokens from Cognito
@@ -65,7 +60,7 @@ export class Agent extends Construct {
     this.executionRole = new iam.Role(this, "ExecutionRole", {
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
       description:
-        "Execution role for Agent runtime with OAuth JWT authentication support",
+        "Execution role for Agent runtime with JWT passthrough authentication",
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           "service-role/AmazonECSTaskExecutionRolePolicy"
@@ -166,30 +161,6 @@ export class Agent extends Construct {
                 }:runtime-endpoint/*`,
               ],
             }),
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              resources: [props.agentUser.credentials.secret.secretArn],
-            }),
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: ["kms:Decrypt"],
-              resources: [
-                `arn:aws:kms:${cdk.Stack.of(this).region}:${
-                  cdk.Stack.of(this).account
-                }:alias/aws/secretsmanager`,
-              ],
-              conditions: {
-                StringEquals: {
-                  "kms:ViaService": `secretsmanager.${
-                    cdk.Stack.of(this).region
-                  }.amazonaws.com`,
-                },
-              },
-            }),
           ],
         }),
       },
@@ -201,18 +172,13 @@ export class Agent extends Construct {
       AWS_REGION: cdk.Stack.of(this).region,
       BEDROCK_MODEL_ID: props.bedrockModelId,
       MCP_SERVER_RUNTIME_ARN: props.mcpServerRuntimeArn,
-      OAUTH_CREDENTIALS_SECRET_NAME:
-        props.agentUser.credentials.secret.secretName,
-      OAUTH_USER_POOL_ID: props.cognitoAuth.userPool.userPoolId,
-      OAUTH_USER_POOL_CLIENT_ID:
-        props.cognitoAuth.userPoolClient.userPoolClientId,
     };
 
     // Build base runtime configuration
     const baseRuntimeConfig = {
       agentRuntimeName: `${namePrefix}_agent`.replace(/-/g, "_"),
       description:
-        "AgentCore runtime for the agent (HTTP protocol) with JWT authentication support",
+        "AgentCore runtime for the agent (HTTP protocol) with JWT passthrough authentication",
       roleArn: this.executionRole.roleArn,
       agentRuntimeArtifact: {
         containerConfiguration: {
@@ -278,7 +244,7 @@ export class Agent extends Construct {
         environmentVariables,
         protocolConfiguration: "HTTP",
         description:
-          "AgentCore runtime for the agent (HTTP protocol) with JWT authentication support",
+          "AgentCore runtime for the agent (HTTP protocol) with JWT passthrough authentication",
       },
     });
 
@@ -307,13 +273,6 @@ export class Agent extends Construct {
     new cdk.CfnOutput(this, "ImageUri", {
       value: this.imageAsset.imageUri,
       description: "URI of the built agent container image",
-    });
-
-    // Output OAuth credentials secret name
-    new cdk.CfnOutput(this, "OAuthCredentialsSecretName", {
-      value: props.agentUser.credentials.secret.secretName,
-      description:
-        "Secrets Manager secret name for OAuth agent user credentials used by agent.py to access mcp_server.py",
     });
   }
 }

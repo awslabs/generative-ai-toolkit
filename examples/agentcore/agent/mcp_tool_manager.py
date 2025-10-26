@@ -74,6 +74,14 @@ class McpToolManager:
     def __init__(self):
         self.mcp_client: SimpleMcpClient | None = None
         self.tools_registered = False
+        self.current_jwt_token: str | None = None
+
+    def set_jwt_token(self, jwt_token: str) -> None:
+        """Set the JWT token for MCP authentication."""
+        self.current_jwt_token = jwt_token
+        # If we have an existing client, update its token
+        if self.mcp_client:
+            self.mcp_client.set_jwt_token(jwt_token)
 
     def _get_or_create_client(self) -> SimpleMcpClient:
         """Get or create MCP client instance (without connecting)."""
@@ -83,7 +91,13 @@ class McpToolManager:
             ]  # Required env var, validated at startup
 
             logger.info(f"Creating MCP client for runtime: {mcp_arn}")
-            self.mcp_client = SimpleMcpClient(runtime_arn=mcp_arn)
+            self.mcp_client = SimpleMcpClient(
+                runtime_arn=mcp_arn, jwt_token=self.current_jwt_token
+            )
+
+        # Ensure the client has the current JWT token
+        if self.current_jwt_token:
+            self.mcp_client.set_jwt_token(self.current_jwt_token)
 
         return self.mcp_client
 
@@ -116,9 +130,9 @@ class McpToolManager:
         """Get a dedicated MCP client for a single tool call to avoid concurrency issues."""
         mcp_arn = os.environ["MCP_SERVER_RUNTIME_ARN"]
 
-        # Create a new client instance for this specific call
+        # Create a new client instance for this specific call with current JWT token
         logger.debug("Creating dedicated MCP client for tool call")
-        return SimpleMcpClient(runtime_arn=mcp_arn)
+        return SimpleMcpClient(runtime_arn=mcp_arn, jwt_token=self.current_jwt_token)
 
     async def register_mcp_tools(self, agent: BedrockConverseAgent) -> bool:
         """Register MCP tools with the Generative AI Toolkit agent."""

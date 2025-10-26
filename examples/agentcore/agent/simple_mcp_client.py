@@ -6,23 +6,12 @@ No complex session management or token refresh needed.
 """
 
 import asyncio
-import json
 import logging
-import os
-import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-import boto3
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-
-# Add the agent directory to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent))
-
-from simple_auth import SimpleAuth
 
 logger = logging.getLogger(__name__)
 
@@ -34,21 +23,20 @@ logging.getLogger("asyncio").setLevel(
 
 
 class SimpleMcpClient:
-    """Simple MCP client for AgentCore Runtime with OAuth authentication."""
+    """Simple MCP client for AgentCore Runtime with JWT token authentication."""
 
-    def __init__(self, runtime_arn: str):
+    def __init__(self, runtime_arn: str, jwt_token: str = None):
         """
         Initialize simple MCP client.
 
         Args:
             runtime_arn: AgentCore Runtime ARN for the MCP server
+            jwt_token: JWT Bearer token for authentication (optional, can be set later)
         """
         self.runtime_arn = runtime_arn
         self.region = runtime_arn.split(":")[3]  # Extract region from ARN
         self.mcp_url = self._construct_mcp_url()
-
-        # Initialize components
-        self.auth = SimpleAuth(region=self.region)
+        self.jwt_token = jwt_token
 
         # Connection state
         self._session = None
@@ -61,52 +49,35 @@ class SimpleMcpClient:
         encoded_arn = quote(self.runtime_arn, safe="")
         return f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
 
-    def _get_credentials_from_env(self):
-        """Get OAuth credentials from environment variables and Secrets Manager."""
+    def set_jwt_token(self, jwt_token: str) -> None:
+        """
+        Set the JWT token for authentication.
 
-        @dataclass
-        class UserCredentials:
-            username: str
-            password: str
-
-        secret_name = os.environ["OAUTH_CREDENTIALS_SECRET_NAME"]
-        client = boto3.client("secretsmanager", region_name=self.region)
-        response = client.get_secret_value(SecretId=secret_name)
-        credentials_data = json.loads(response["SecretString"])
-
-        return UserCredentials(
-            username=credentials_data["username"], password=credentials_data["password"]
-        )
+        Args:
+            jwt_token: JWT Bearer token for authentication
+        """
+        self.jwt_token = jwt_token
 
     async def connect(self) -> None:
         """
-        Connect to AgentCore Runtime MCP server with authentication.
+        Connect to AgentCore Runtime MCP server with JWT token authentication.
 
         Raises:
             Exception: When authentication or connection fails
         """
         try:
+            if not self.jwt_token:
+                raise Exception(
+                    "JWT token is required for authentication. Call set_jwt_token() first."
+                )
 
             logger.info(
                 f"Connecting to AgentCore Runtime MCP server: {self.runtime_arn}"
             )
 
-            # Get configuration from environment variables
-            user_pool_id = os.environ["OAUTH_USER_POOL_ID"]
-            client_id = os.environ["OAUTH_USER_POOL_CLIENT_ID"]
-            credentials = self._get_credentials_from_env()
-
-            # Get Bearer token
-            bearer_token = self.auth.get_bearer_token(
-                user_pool_id=user_pool_id,
-                client_id=client_id,
-                username=credentials.username,
-                password=credentials.password,
-            )
-
-            # Create authenticated headers
+            # Create authenticated headers using the provided JWT token
             headers = {
-                "Authorization": f"Bearer {bearer_token}",
+                "Authorization": f"Bearer {self.jwt_token}",
                 "Content-Type": "application/json",
             }
 

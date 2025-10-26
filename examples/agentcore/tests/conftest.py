@@ -54,12 +54,6 @@ def _setup_required_environment_variables():
         # MCP Server Runtime ARN
         if "McpServerRuntimeArn" in key and "Endpoint" not in key:
             os.environ["MCP_SERVER_RUNTIME_ARN"] = value
-        # Agent OAuth Credentials Secret Name (legacy output name)
-        elif "AgentOAuthCredentialsSecretName" in key:
-            os.environ["OAUTH_CREDENTIALS_SECRET_NAME"] = value
-        # Agent User Credentials Secret Name (new output name)
-        elif "AgentUserCredentialsSecretName" in key:
-            os.environ["OAUTH_CREDENTIALS_SECRET_NAME"] = value
         # Cognito User Pool ID
         elif "CognitoAuthUserPoolId" in key:
             os.environ["OAUTH_USER_POOL_ID"] = value

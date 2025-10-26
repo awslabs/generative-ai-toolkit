@@ -29,9 +29,6 @@ def validate_environment_variables():
         "AWS_REGION": "AWS region for Bedrock service",
         "BEDROCK_MODEL_ID": "Bedrock model identifier",
         "MCP_SERVER_RUNTIME_ARN": "MCP server runtime ARN for tool integration",
-        "OAUTH_CREDENTIALS_SECRET_NAME": "OAuth credentials secret name for authentication",
-        "OAUTH_USER_POOL_ID": "OAuth Cognito User Pool ID for authentication",
-        "OAUTH_USER_POOL_CLIENT_ID": "OAuth Cognito User Pool Client ID for authentication",
     }
 
     missing_vars = []
@@ -51,13 +48,7 @@ def validate_environment_variables():
     logger.info(f"  AWS_REGION: {os.environ.get('AWS_REGION')}")
     logger.info(f"  BEDROCK_MODEL_ID: {os.environ.get('BEDROCK_MODEL_ID')}")
     logger.info(f"  MCP_SERVER_RUNTIME_ARN: {os.environ.get('MCP_SERVER_RUNTIME_ARN')}")
-    logger.info(
-        f"  OAUTH_CREDENTIALS_SECRET_NAME: {os.environ.get('OAUTH_CREDENTIALS_SECRET_NAME')}"
-    )
-    logger.info(f"  OAUTH_USER_POOL_ID: {os.environ.get('OAUTH_USER_POOL_ID')}")
-    logger.info(
-        f"  OAUTH_USER_POOL_CLIENT_ID: {os.environ.get('OAUTH_USER_POOL_CLIENT_ID')}"
-    )
+    logger.info("  Authentication: JWT Bearer token (passed from request headers)")
 
 
 # Validate environment on startup
@@ -187,8 +178,9 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
     logger.info("Agent invoked.")
 
     try:
+        jwt_token = None
 
-        # Check for Authorization header and extract user info from JWT
+        # Check for Authorization header and extract JWT token
         if context.request_headers and "Authorization" in context.request_headers:
             auth_header = context.request_headers["Authorization"]
 
@@ -196,9 +188,11 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
             if auth_header.startswith("Bearer "):
                 jwt_token = auth_header[7:]  # Remove "Bearer " prefix
 
+                # Pass JWT token to MCP manager for tool authentication
+                mcp_manager.set_jwt_token(jwt_token)
+
                 # Decode JWT token to extract user information (without verification for info extraction)
                 try:
-
                     # Decode JWT payload (second part after splitting by '.')
                     parts = jwt_token.split(".")
                     if len(parts) >= 2:
@@ -226,13 +220,19 @@ def invoke(payload: dict[str, object], context: RequestContext) -> dict[str, str
             else:
                 logger.warning("Authorization header doesn't start with 'Bearer '")
         else:
-            logger.info("No Authorization header found in request_headers")
+            logger.warning(
+                "No Authorization header found - MCP tools may not be available"
+            )
             if context.request_headers:
                 logger.info(
                     f"Available headers: {list(context.request_headers.keys())}"
                 )
             else:
                 logger.info("request_headers is None")
+
+        # If no JWT token is available, warn about limited functionality
+        if not jwt_token:
+            logger.warning("No JWT token available - MCP tools will not be accessible")
 
         # Extract session information and user message
         session_id, user_message = extract_session_info(payload)
