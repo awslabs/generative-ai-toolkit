@@ -34,5 +34,12 @@ node_modules/
 *.log
 *.swp
 
+# Shell configurations
+.zshrc
+
 # Amazon Q Developer settings and rules
 .amazonq
+
+# Kiro settings and rules
+.kiro
+
