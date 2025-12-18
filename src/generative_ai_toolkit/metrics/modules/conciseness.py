@@ -68,7 +68,7 @@ class AgentResponseConcisenessMetric(BaseMetric):
                                 Example output:
                                 {{ "score": 9, "reasoning": "The agent's responses are concise, and it does not provide superfluous examples or useless encouragements."}}
 
-                                Only return the valid JSON object.
+                                Only return the valid JSON object. Do not wrap it in markdown code blocks or any other formatting.
                                 """
                             )
                             .format(conversation=json.dumps(user_conversation))

@@ -83,7 +83,7 @@ class ConversationExpectationMetric(BaseMetric):
                                 Example output:
                                 {{ "score": 9, "reasoning": "The agent succeeded in helping the user as expected"}}
 
-                                Only return the JSON object.
+                                Only return the JSON object. Do not wrap it in markdown code blocks or any other formatting.
                                 """
                             )
                             .format(

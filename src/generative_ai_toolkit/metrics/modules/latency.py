@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
-from generative_ai_toolkit.utils.logging import logger
 
 
 class LatencyMetric(BaseMetric):
@@ -30,20 +29,19 @@ class LatencyMetric(BaseMetric):
 
         dimensions = []
         trace_type = trace.attributes.get("ai.trace.type")
-        if trace_type == "tool-invocation":
-            dimensions.append({"ToolName": trace.attributes["ai.tool.name"]})
-        elif trace_type == "llm-invocation":
-            dimensions.append(
-                {"ModelName": trace.attributes["ai.llm.request.model.id"]}
-            )
-        elif trace_type == "conversation-history-list":
-            dimensions.append({"ConversationHistory": "list-messages"})
-        elif trace_type == "conversation-history-add":
-            dimensions.append({"ConversationHistory": "add-message"})
-        elif trace_type in {"converse", "converse-stream"}:
-            dimensions.append({"Converse": trace_type})
-        else:
-            logger.warn("Unknown trace type", trace_type=trace_type)
+        match trace_type:
+            case "tool-invocation":
+                dimensions.append({"ToolName": trace.attributes["ai.tool.name"]})
+            case "llm-invocation":
+                dimensions.append(
+                    {"ModelName": trace.attributes["ai.llm.request.model.id"]}
+                )
+            case "conversation-history-list":
+                dimensions.append({"ConversationHistory": "list-messages"})
+            case "conversation-history-add":
+                dimensions.append({"ConversationHistory": "add-message"})
+            case "converse" | "converse-stream":
+                dimensions.append({"Converse": trace_type})
 
         return Measurement(
             name="Latency",

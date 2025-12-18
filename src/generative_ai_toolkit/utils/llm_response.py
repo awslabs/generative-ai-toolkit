@@ -30,6 +30,22 @@ def get_text(response: "ConverseResponseTypeDef"):
 
 def json_parse(response: "ConverseResponseTypeDef"):
     text = get_text(response).strip()
+
+    # Handle markdown code blocks
+    if text.startswith("```json"):
+        # Find the closing ``` and extract content between
+        end_marker = text.rfind("```")
+        if end_marker > 7:  # Make sure we found a closing marker after ```json
+            text = text[7:end_marker].strip()  # Remove ```json and closing ```
+    elif text.startswith("```") and text.count("```") >= 2:
+        # Handle generic code blocks that might contain JSON
+        first_newline = text.find('\n')
+        if first_newline != -1:
+            # Skip the opening ``` line
+            end_marker = text.rfind("```")
+            if end_marker > first_newline:
+                text = text[first_newline+1:end_marker].strip()
+
     try:
         return json.loads(text.replace("\n", " "))
     except json.decoder.JSONDecodeError as e:
